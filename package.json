@@ -1,0 +1,21 @@
+{
+  "name": "readonly-git-mirror",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "isomorphic-git": "^1.27.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.5"
+  }
+}
