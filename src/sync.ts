@@ -10,8 +10,37 @@ import git from "isomorphic-git";
 import { MirrorConfig } from "./config";
 import { visiblePaths } from "./sparse";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Fs = any;
+/**
+ * 插件需要的 fs 能力，逐个精确声明。
+ *
+ * 不用 `any`：官方自动审核不允许禁用 `@typescript-eslint/no-explicit-any`，而一个
+ * `any` 会顺着 fs 的每次调用扩散成几十条 no-unsafe-* 告警。
+ *
+ * 也不直接用 isomorphic-git 的 `PromiseFsClient`：它把每个方法都写成 `Function`，
+ * 调用时同样躲不过 no-unsafe-call。
+ *
+ * 于是两边都满足：精确的函数类型天然可赋给 `Function`，所以这个类型既能通过
+ * 类型检查传给 isomorphic-git，我们自己的调用又是有类型的。顺带把「这个插件到底
+ * 碰文件系统的哪些能力」写成了白纸黑字 —— 对评估风险的审核者和用户都更有用。
+ *
+ * 前五个是我们自己调的；后三个我们不调，但 isomorphic-git 内部要用，
+ * 结构上必须声明，否则赋值不兼容。
+ */
+export type MirrorFs = {
+  promises: {
+    readFile(path: string): Promise<Uint8Array>;
+    stat(path: string): Promise<{ isDirectory(): boolean }>;
+    readdir(path: string): Promise<string[]>;
+    unlink(path: string): Promise<void>;
+    rmdir(path: string): Promise<void>;
+
+    writeFile(path: string, data: Uint8Array | string): Promise<void>;
+    mkdir(path: string): Promise<void>;
+    lstat(path: string): Promise<{ isDirectory(): boolean }>;
+  };
+};
+
+type Fs = MirrorFs;
 
 /**
  * isomorphic-git 只认 index（dircache）v2，读到别的版本直接抛

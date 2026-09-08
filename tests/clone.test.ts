@@ -30,7 +30,7 @@ describe("首次 clone", () => {
 
     expect(existsSync(join(dir, ".git"))).toBe(false);
 
-    await expect(fetchRemote({ fs, http, dir, cfg } as never)).rejects.toThrow();
+    await expect(fetchRemote({ fs, http, dir, cfg })).rejects.toThrow();
 
     expect(existsSync(join(dir, ".git"))).toBe(true);
     const remotes = await git.listRemotes({ fs, dir });

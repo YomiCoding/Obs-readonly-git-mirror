@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, MirrorConfig, decodeConfig, isConfigured } from "./conf
 import { makeHttp } from "./http";
 import { MirrorSettingTab } from "./settings-tab";
 import { statusText } from "./status";
-import { SyncError, syncOnce } from "./sync";
+import { MirrorFs, SyncError, syncOnce } from "./sync";
 
 /** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。 */
 const PULL_INTERVAL_MS = 60_000;
@@ -61,8 +61,12 @@ export default class GitMirrorPlugin extends Plugin {
     return p;
   }
 
-  private nodeFs(): unknown {
-    const req = (window as unknown as { require?: (m: string) => unknown }).require;
+  /**
+   * Node 的 fs。只有桌面端的 Electron 渲染进程有 `window.require`；
+   * 移动端没有，因此这里直接给出可读的失败原因，而不是让下游报一个看不懂的错。
+   */
+  private nodeFs(): MirrorFs {
+    const req = (window as unknown as { require?: (m: string) => MirrorFs }).require;
     if (!req) throw new SyncError("repo", "This platform is not supported yet (desktop only).");
     return req("fs");
   }
@@ -75,7 +79,7 @@ export default class GitMirrorPlugin extends Plugin {
     try {
       const { oid } = await syncOnce({
         fs: this.nodeFs(),
-        http: makeHttp(requestUrl as never),
+        http: makeHttp(requestUrl),
         dir: this.vaultPath(),
         cfg: this.cfg,
       });
