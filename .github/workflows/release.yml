@@ -1,0 +1,54 @@
+# 推一个版本 tag 就构建、签署、发布。
+#
+# 关键是 attest-build-provenance：它给产物签一份「这确实是从本仓库这次提交构建出来的」
+# 的证明，用户可以用 `gh attestation verify main.js --repo <owner>/<repo>` 验。
+# 手工在本机构建再上传做不到这件事 —— 没有任何东西能证明上传的二进制和仓库里的
+# 代码对得上。官方的上架检查会就此给出建议。
+name: Release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]   # 与 manifest.json 的 version 一致，且不带 v 前缀
+
+permissions:
+  contents: write        # 建 release
+  id-token: write        # 签署用的 OIDC 令牌
+  attestations: write    # 写 attestation
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      # 发版前把该拦的都拦一遍。构建挂了总比发出去一个坏版本好。
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      # tag 必须和 manifest 里的版本号一致，否则 Obsidian 找不到对应的资产。
+      - name: Check tag matches manifest version
+        run: |
+          manifest="$(node -p "require('./manifest.json').version")"
+          if [ "$manifest" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} != manifest version ${manifest}"
+            exit 1
+          fi
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/main.js
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/main.js dist/manifest.json
+             --title "${GITHUB_REF_NAME}" --generate-notes
