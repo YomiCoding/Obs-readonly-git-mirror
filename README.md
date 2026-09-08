@@ -77,7 +77,9 @@ ship one. Adding a path to the list later removes it from disk on the next sync.
 
 ## Limitations
 
-- **Desktop only** for now. Mobile is not supported.
+- **Desktop only.** The plugin needs Node's file system; mobile is not supported.
+- **Requires Obsidian 1.13 or newer** (it uses the declarative settings API, so its settings
+  show up in Obsidian's settings search).
 - Shallow clone (`depth: 1`); history is not available locally.
 - Large repositories are slow and memory-hungry, because the Git implementation is pure
   JavaScript ([isomorphic-git](https://github.com/isomorphic-git/isomorphic-git)).

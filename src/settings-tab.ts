@@ -18,6 +18,10 @@ type Key = "setupCode" | "repoUrl" | "tokenUser" | "token";
  * 理由不只是「新 API」：只有声明式的定义，Obsidian 才能把插件的设置项收进
  * **全局设置搜索**。用 display() 的话，1.13+ 的用户在设置里搜「mirror」「token」
  * 是搜不到我们的 —— 官方上架检查会直接就此告警。
+ *
+ * 代价是 `minAppVersion` 必须是 1.13.0：这套 API（含 `update()`）1.13 才有。
+ * 权衡过「同时实现 display() 兼容旧版」，没做 —— 那要为两套渲染路径付双份代码和
+ * 双份出错面，而换来的是一个几乎不存在的用户群（Obsidian 自动更新，1.13 已是现行版）。
  */
 export class MirrorSettingTab extends PluginSettingTab {
   constructor(app: App, private host: SettingsHost) {
