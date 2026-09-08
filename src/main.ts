@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, MirrorConfig, decodeConfig, isConfigured } from "./conf
 import { makeHttp } from "./http";
 import { MirrorSettingTab } from "./settings-tab";
 import { statusText } from "./status";
-import { MirrorFs, SyncError, syncOnce } from "./sync";
+import { MirrorFs, SyncError, resolveTarget, syncOnce } from "./sync";
 
 /** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。 */
 const PULL_INTERVAL_MS = 60_000;
@@ -77,12 +77,12 @@ export default class GitMirrorPlugin extends Plugin {
     this.syncing = true;
     this.paint();
     try {
-      const { oid } = await syncOnce({
-        fs: this.nodeFs(),
-        http: makeHttp(requestUrl),
-        dir: this.vaultPath(),
-        cfg: this.cfg,
+      const fs = this.nodeFs();
+      // 镜像到哪个目录由配置决定，并在这一步拦住「铺进别人已有的笔记库」。
+      const dir = await resolveTarget({
+        fs, vaultPath: this.vaultPath(), targetDir: this.cfg.targetDir,
       });
+      const { oid } = await syncOnce({ fs, http: makeHttp(requestUrl), dir, cfg: this.cfg });
       this.state.lastOid = oid;
       this.state.lastSyncAt = Date.now();
       this.state.lastError = "";

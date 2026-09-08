@@ -6,6 +6,15 @@ export type MirrorConfig = {
   /** HTTP Basic 的口令，通常是只读访问令牌。 */
   token: string;
   /**
+   * 镜像到库里的哪个子文件夹。**留空 = 直接铺在库根目录**。
+   *
+   * 强烈建议填一个：铺在根目录会把远端内容和用户自己的笔记混在一起，
+   * 而用户往往是在自己已有的笔记库里装的插件（Obsidian 启动时默认打开上次的库）。
+   * 留空时会有一道保护，见 sync.ts 的 assertSafeTarget。
+   */
+  targetDir: string;
+
+  /**
    * 仓库内下发隐藏名单的文件名。
    * 留空 = 自动探测几个常见名字；填了就只认填的那个。
    */
@@ -18,6 +27,7 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   repoUrl: "",
   tokenUser: "",
   token: "",
+  targetDir: "",
   sparseFile: "",   // 留空 → 自动探测，见 sync.ts 的 SPARSE_CANDIDATES
   hidePaths: [],
 };
@@ -68,6 +78,7 @@ export function decodeConfig(text: string): MirrorConfig {
     repoUrl: String(p.repoUrl),
     tokenUser: String(p.tokenUser ?? ""),
     token: String(p.token),
+    targetDir: p.targetDir === undefined ? DEFAULT_CONFIG.targetDir : String(p.targetDir),
     sparseFile: p.sparseFile === undefined ? DEFAULT_CONFIG.sparseFile : String(p.sparseFile),
     hidePaths: Array.isArray(p.hidePaths) ? p.hidePaths.map(String) : [],
   };

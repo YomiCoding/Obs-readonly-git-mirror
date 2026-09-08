@@ -190,6 +190,47 @@ export async function applyRef(a: {
   return landed;
 }
 
+/**
+ * 算出真正要镜像到哪个目录，必要时建出来。
+ *
+ * 这道保护是一次真实事故换来的：用户在**自己已有的笔记库**里装了插件
+ * （Obsidian 启动时默认打开上次的库，很容易就这么发生），配好之后远端内容直接铺进
+ * 个人库根目录，和自己的笔记混在一起 —— 全程没有一句提示。
+ *
+ * 所以：填了子文件夹就用它（在任何库里都安全）；留空要铺根目录时，只有「库是空的」
+ * 或者「本来就是我们在镜像的库」才放行。
+ */
+export async function resolveTarget(a: {
+  fs: Fs; vaultPath: string; targetDir: string;
+}): Promise<string> {
+  const name = a.targetDir.trim();
+
+  if (name) {
+    // 只允许一层普通名字：带斜杠或上跳就能写到库外面去，那是另一回事，不该悄悄支持。
+    if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
+      throw new SyncError("repo",
+        "Target folder must be a single folder name, without slashes.");
+    }
+    const dir = `${a.vaultPath}/${name}`;
+    await a.fs.promises.mkdir(dir).catch(() => undefined);   // 已存在就算了
+    return dir;
+  }
+
+  // 留空 = 铺在库根目录。先确认这么做不会把别人的笔记搅进来。
+  const mirroring = await a.fs.promises.stat(`${a.vaultPath}/.git`)
+    .then(() => true).catch(() => false);
+  if (!mirroring) {
+    const entries = (await a.fs.promises.readdir(a.vaultPath))
+      .filter((n: string) => n !== ".obsidian" && !n.startsWith("."));
+    if (entries.length > 0) {
+      throw new SyncError("repo",
+        "This vault already contains other files. Set a target subfolder in the settings "
+        + "so the mirror does not mix with your own notes, or use an empty vault.");
+    }
+  }
+  return a.vaultPath;
+}
+
 export type SyncDeps = { fs: Fs; http: unknown; dir: string; cfg: MirrorConfig };
 
 export class SyncError extends Error {

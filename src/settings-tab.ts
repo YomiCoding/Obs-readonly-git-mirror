@@ -9,7 +9,7 @@ export interface SettingsHost extends Plugin {
 }
 
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
-type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "sparseFile";
+type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile";
 
 /**
  * 用 1.13 的声明式设置 API（getSettingDefinitions / getControlValue /
@@ -53,6 +53,14 @@ export class MirrorSettingTab extends PluginSettingTab {
         name: "Token",
         desc: "Read-only access token. It cannot push.",
         control: { type: "text", key: "token" },
+      },
+      {
+        name: "Target folder",
+        desc: "Which folder inside this vault to mirror into. Strongly recommended — "
+          + "leaving it empty mirrors into the vault root, which mixes the remote content "
+          + "with your own notes. A single folder name, no slashes.",
+        aliases: ["folder", "directory", "location"],
+        control: { type: "text", key: "targetDir", placeholder: "knowledge-base" },
       },
       {
         name: "Hidden paths file",

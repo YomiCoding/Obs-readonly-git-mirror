@@ -7,6 +7,7 @@ const sample = {
   repoUrl: "https://host:8443/g/repo.git",
   tokenUser: "reader",
   token: "secret-token",
+  targetDir: "knowledge-base",
   sparseFile: ".mirror-sparse",
   hidePaths: ["notes-internal", "README.md"],
 };
@@ -42,6 +43,7 @@ describe("配置码", () => {
       repoUrl: "https://h/r.git", tokenUser: "u", token: "t",
     })).toString("base64url");
     const c = decodeConfig(minimal);
+    expect(c.targetDir).toBe(DEFAULT_CONFIG.targetDir);
     expect(c.sparseFile).toBe(DEFAULT_CONFIG.sparseFile);
     expect(c.hidePaths).toEqual([]);
   });
