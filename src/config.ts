@@ -5,7 +5,10 @@ export type MirrorConfig = {
   tokenUser: string;
   /** HTTP Basic 的口令，通常是只读访问令牌。 */
   token: string;
-  /** 仓库内下发隐藏名单的文件名。为空表示不使用。 */
+  /**
+   * 仓库内下发隐藏名单的文件名。
+   * 留空 = 自动探测几个常见名字；填了就只认填的那个。
+   */
   sparseFile: string;
   /** sparseFile 不存在时的兜底隐藏名单（顶层名）。 */
   hidePaths: string[];
@@ -15,7 +18,7 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   repoUrl: "",
   tokenUser: "",
   token: "",
-  sparseFile: ".mirror-sparse",
+  sparseFile: "",   // 留空 → 自动探测，见 sync.ts 的 SPARSE_CANDIDATES
   hidePaths: [],
 };
 

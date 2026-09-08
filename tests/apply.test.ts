@@ -179,6 +179,27 @@ describe("applyRef", () => {
     expect(await git.resolveRef({ fs, dir, ref: "refs/heads/main" })).toBe(first);
   });
 
+  it("名单文件名留空 → 用默认名；填了就只认填的那个", async () => {
+    // 这条钉住一个会静默出错的路径：用户在设置界面手动填地址和令牌、名单那栏留空，
+    // 而仓库用的是别的文件名 —— 名单读不到就等于不隐藏，仓库里给工具用的文件会
+    // 全部出现在用户的文件树里，既不报错也没提示。实测踩过。
+    await put("docs/a.md", "A");
+    await put("internal/x.md", "X");
+    await put(".mirror-sparse", "/*\n!/internal/\n");     // 默认名
+    await put(".custom-sparse", "/*\n!/docs/\n");         // 另一个名字
+    const oid = await commitAsRemote("v1");
+
+    // 留空 → 走默认名 → 藏 internal
+    const a = await applyRef({ fs, dir, oid, sparseFile: "", hidePaths: [] });
+    expect(a).toContain("docs");
+    expect(a).not.toContain("internal");
+
+    // 显式指定 → 只认它 → 改成藏 docs
+    const b = await applyRef({ fs, dir, oid, sparseFile: ".custom-sparse", hidePaths: [] });
+    expect(b).toContain("internal");
+    expect(b).not.toContain("docs");
+  });
+
   it("远端 force push（历史被换掉）也能同步过去", async () => {
     await put("docs/a.md", "old");
     const old = await commitAsRemote("v1");

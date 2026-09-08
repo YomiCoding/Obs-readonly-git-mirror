@@ -117,14 +117,25 @@ async function previousTopLevels(fs: Fs, dir: string): Promise<string[]> {
   }
 }
 
-async function readSparse(fs: Fs, dir: string, oid: string, name: string): Promise<string | null> {
-  if (!name) return null;
+async function readBlobText(fs: Fs, dir: string, oid: string, path: string): Promise<string | null> {
   try {
-    const { blob } = await git.readBlob({ fs, dir, oid, filepath: name });
+    const { blob } = await git.readBlob({ fs, dir, oid, filepath: path });
     return new TextDecoder().decode(blob);
   } catch {
     return null;
   }
+}
+
+/**
+ * 配置里没指定名单文件时的默认名。
+ *
+ * 只有一个候选、且是中性名字：**不在这里硬编码任何具体部署方的文件名**。
+ * 需要用别的名字的仓库，在设置里填、或由配置码带上即可。
+ */
+const DEFAULT_SPARSE_FILE = ".mirror-sparse";
+
+async function readSparse(fs: Fs, dir: string, oid: string, name: string): Promise<string | null> {
+  return readBlobText(fs, dir, oid, name || DEFAULT_SPARSE_FILE);
 }
 
 /**

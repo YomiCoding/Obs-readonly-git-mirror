@@ -9,7 +9,7 @@ export interface SettingsHost extends Plugin {
 }
 
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
-type Key = "setupCode" | "repoUrl" | "tokenUser" | "token";
+type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "sparseFile";
 
 /**
  * 用 1.13 的声明式设置 API（getSettingDefinitions / getControlValue /
@@ -53,6 +53,14 @@ export class MirrorSettingTab extends PluginSettingTab {
         name: "Token",
         desc: "Read-only access token. It cannot push.",
         control: { type: "text", key: "token" },
+      },
+      {
+        name: "Hidden paths file",
+        desc: "Optional. Name of a file in the repository listing top-level paths to keep "
+          + "out of the vault, in Git non-cone sparse-checkout format. Leave empty to mirror "
+          + "everything.",
+        aliases: ["sparse", "exclude", "ignore"],
+        control: { type: "text", key: "sparseFile", placeholder: ".mirror-sparse" },
       },
       {
         name: "Last sync",
