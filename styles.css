@@ -1,7 +1,0 @@
-/* 镜像下来的笔记顶上那一块「笔记属性」（frontmatter 面板）。
-   镜像内容多半是机器生成的，属性里是流水线字段，对读者只是噪音。
-   class 由插件按「这个笔记在不在镜像目录里」逐个视图挂，所以用户自己的笔记不受影响；
-   只藏显示，文件一个字节都没动。设置里可以关掉。 */
-.readonly-git-mirror-doc .metadata-container {
-  display: none;
-}

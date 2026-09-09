@@ -19,4 +19,3 @@ await esbuild.build({
 });
 
 copyFileSync("manifest.json", "dist/manifest.json");
-copyFileSync("styles.css", "dist/styles.css");

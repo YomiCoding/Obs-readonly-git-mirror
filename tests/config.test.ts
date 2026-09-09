@@ -10,7 +10,6 @@ const sample = {
   targetDir: "knowledge-base",
   sparseFile: ".mirror-sparse",
   hidePaths: ["notes-internal", "README.md"],
-  hideProps: false,
 };
 
 describe("配置码", () => {
@@ -47,13 +46,6 @@ describe("配置码", () => {
     expect(c.targetDir).toBe(DEFAULT_CONFIG.targetDir);
     expect(c.sparseFile).toBe(DEFAULT_CONFIG.sparseFile);
     expect(c.hidePaths).toEqual([]);
-  });
-
-  it("老配置码没有 hideProps → 落到默认值 true，不是 false", () => {
-    const old = Buffer.from(JSON.stringify({
-      repoUrl: "https://h/r.git", tokenUser: "u", token: "t",
-    })).toString("base64url");
-    expect(decodeConfig(old).hideProps).toBe(true);
   });
 
   it("默认配置里不带任何凭据", () => {

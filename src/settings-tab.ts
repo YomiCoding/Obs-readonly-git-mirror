@@ -9,7 +9,7 @@ export interface SettingsHost extends Plugin {
 }
 
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
-type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile" | "hideProps";
+type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile";
 
 /**
  * 用 1.13 的声明式设置 API（getSettingDefinitions / getControlValue /
@@ -71,15 +71,6 @@ export class MirrorSettingTab extends PluginSettingTab {
         control: { type: "text", key: "sparseFile", placeholder: ".mirror-sparse" },
       },
       {
-        name: "Hide note properties",
-        desc: "Hide the properties panel at the top of mirrored notes. Mirrored content is "
-          + "usually machine-generated, and its front matter is plumbing rather than something "
-          + "to read. Display only — the files are not modified. Your own notes keep their "
-          + "properties either way.",
-        aliases: ["frontmatter", "front matter", "metadata", "properties"],
-        control: { type: "toggle", key: "hideProps" },
-      },
-      {
         name: "Last sync",
         desc: st.lastError
           ? `Failed: ${st.lastError}`
@@ -100,18 +91,11 @@ export class MirrorSettingTab extends PluginSettingTab {
   getControlValue(key: string): unknown {
     // 配置码是一次性输入，不回显：它含令牌，留在输入框里等于把凭据摆在设置页上。
     if (key === "setupCode") return "";
-    if (key === "hideProps") return this.host.cfg.hideProps;
-    return this.host.cfg[key as Exclude<Key, "setupCode" | "hideProps">] ?? "";
+    return this.host.cfg[key as Exclude<Key, "setupCode">] ?? "";
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    if (key === "hideProps") {
-      this.host.cfg.hideProps = value === true;
-      await this.host.saveAll();
-      return;
-    }
-
-    // 其余控件全是 text 类型，值一定是字符串；显式收窄而不是 String(unknown)——
+    // 这几个控件全是 text 类型，值一定是字符串；显式收窄而不是 String(unknown)——
     // 后者对对象会静默变成 "[object Object]"，把垃圾写进配置。
     const v = typeof value === "string" ? value.trim() : "";
 
@@ -129,7 +113,7 @@ export class MirrorSettingTab extends PluginSettingTab {
       return;
     }
 
-    this.host.cfg[key as Exclude<Key, "setupCode" | "hideProps">] = v;
+    this.host.cfg[key as Exclude<Key, "setupCode">] = v;
     await this.host.saveAll();
   }
 }

@@ -21,15 +21,6 @@ export type MirrorConfig = {
   sparseFile: string;
   /** sparseFile 不存在时的兜底隐藏名单（顶层名）。 */
   hidePaths: string[];
-
-  /**
-   * 藏掉镜像下来的笔记顶上那一块「笔记属性」（frontmatter 面板）。
-   *
-   * 默认开：镜像内容多半是机器生成的，属性里是流水线字段，对读者是噪音。
-   * 只影响显示，不改文件；镜像的是人手写的资料库（属性里有 aliases/cssclasses
-   * 这类真有用的东西）就关掉它。**只作用于镜像目录，用户自己的笔记不受影响。**
-   */
-  hideProps: boolean;
 };
 
 export const DEFAULT_CONFIG: MirrorConfig = {
@@ -39,7 +30,6 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   targetDir: "",
   sparseFile: "",   // 留空 → 自动探测，见 sync.ts 的 SPARSE_CANDIDATES
   hidePaths: [],
-  hideProps: true,
 };
 
 export class ConfigError extends Error {
@@ -91,8 +81,6 @@ export function decodeConfig(text: string): MirrorConfig {
     targetDir: p.targetDir === undefined ? DEFAULT_CONFIG.targetDir : String(p.targetDir),
     sparseFile: p.sparseFile === undefined ? DEFAULT_CONFIG.sparseFile : String(p.sparseFile),
     hidePaths: Array.isArray(p.hidePaths) ? p.hidePaths.map(String) : [],
-    // 老配置码里没有这个字段，必须落到默认值 —— 用 Boolean(undefined) 会静默变成 false。
-    hideProps: typeof p.hideProps === "boolean" ? p.hideProps : DEFAULT_CONFIG.hideProps,
   };
 }
 

@@ -1,6 +1,5 @@
-import { MarkdownView, Notice, Plugin, requestUrl } from "obsidian";
+import { Notice, Plugin, requestUrl } from "obsidian";
 import { DEFAULT_CONFIG, MirrorConfig, decodeConfig, isConfigured } from "./config";
-import { MIRROR_CLASS, inMirror } from "./hide-props";
 import { makeHttp } from "./http";
 import { MirrorSettingTab } from "./settings-tab";
 import { statusText } from "./status";
@@ -43,34 +42,12 @@ export default class GitMirrorPlugin extends Plugin {
       }
     });
 
-    // 「笔记属性」的显隐是每个视图上的一个 class，随打开的笔记变，所以要跟着这两个事件走。
-    this.registerEvent(this.app.workspace.on("file-open", () => this.paintHidden()));
-    this.registerEvent(this.app.workspace.on("layout-change", () => this.paintHidden()));
-
-    this.app.workspace.onLayoutReady(() => {
-      this.paintHidden();   // 启动时恢复出来的标签页不会触发 file-open
-      void this.syncNow();
-    });
+    this.app.workspace.onLayoutReady(() => void this.syncNow());
     this.registerInterval(window.setInterval(() => void this.syncNow(), PULL_INTERVAL_MS));
   }
 
   async saveAll(): Promise<void> {
     await this.saveData({ cfg: this.cfg, state: this.state });
-    // 配置一改（开关、目标文件夹、配置码）显隐规则就变了，立刻重刷，不等下一次切换笔记。
-    this.paintHidden();
-  }
-
-  /**
-   * 给镜像目录里的笔记挂 MIRROR_CLASS，styles.css 据此藏掉「笔记属性」。
-   * 逐个视图挂而不是改 Obsidian 的全局设置：后者会连用户自己的笔记一起藏。
-   */
-  paintHidden(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-      const view = leaf.view;
-      if (!(view instanceof MarkdownView)) continue;
-      const on = this.cfg.hideProps && !!view.file && inMirror(view.file.path, this.cfg.targetDir);
-      view.containerEl.classList.toggle(MIRROR_CLASS, on);
-    }
   }
 
   private paint(): void {
