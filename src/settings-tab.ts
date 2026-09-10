@@ -56,9 +56,9 @@ export class MirrorSettingTab extends PluginSettingTab {
       },
       {
         name: "Target folder",
-        desc: "Which folder inside this vault to mirror into. Strongly recommended — "
-          + "leaving it empty mirrors into the vault root, which mixes the remote content "
-          + "with your own notes. A single folder name, no slashes.",
+        desc: "Leave empty when this vault is dedicated to the mirror (recommended: create a new, "
+          + "empty vault for it, and switch vaults with the vault switcher). Set a single folder "
+          + "name, no slashes, only if you want the mirror inside a vault that also holds your own notes.",
         aliases: ["folder", "directory", "location"],
         control: { type: "text", key: "targetDir", placeholder: "knowledge-base" },
       },

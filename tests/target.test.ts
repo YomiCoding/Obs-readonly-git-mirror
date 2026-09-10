@@ -24,9 +24,20 @@ describe("resolveTarget", () => {
     expect(t).toBe(vault);
   });
 
+  it("留空 + 只有 Obsidian 新建库自带的欢迎笔记 → 当作空库放行", async () => {
+    // 「新建一个空库专门放镜像」是推荐用法，而 Obsidian 新建库时一定会生成一篇欢迎笔记
+    // （中文界面叫 欢迎.md，英文叫 Welcome.md）。不放行的话，照着推荐做的每个用户都会被拦。
+    await mkdir(join(vault, ".obsidian"), { recursive: true });
+    await writeFile(join(vault, "欢迎.md"), "这是你的新*仓库*。");
+    expect(await resolveTarget({ fs, vaultPath: vault, targetDir: "" })).toBe(vault);
+    await rm(join(vault, "欢迎.md"));
+    await writeFile(join(vault, "Welcome.md"), "This is your new *vault*.");
+    expect(await resolveTarget({ fs, vaultPath: vault, targetDir: "" })).toBe(vault);
+  });
+
   it("留空 + 库里已有用户文件 → 拒绝，且说清怎么办", async () => {
     await mkdir(join(vault, ".obsidian"), { recursive: true });
-    await writeFile(join(vault, "欢迎.md"), "我的笔记");
+    await writeFile(join(vault, "我的想法.md"), "我的笔记");
 
     // 这是真实事故：用户在自己已有的笔记库里装了插件（Obsidian 启动默认打开上次的库），
     // 结果远端内容被灌进个人库，和自己的笔记混在一起，全程没有一句提示。

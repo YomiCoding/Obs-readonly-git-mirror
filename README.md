@@ -29,9 +29,15 @@ token.**
 
 ## Setup
 
-1. Install and enable the plugin.
-2. Open Settings → Read-only Git Mirror.
-3. Either paste the one-line **setup code** your administrator gave you, or fill in the
+1. Create a new, empty vault dedicated to the mirror (recommended). Obsidian's vault
+   switcher then lets you move between it and your own vaults, and nothing is ever written
+   into your own notes. The welcome note a new vault starts with is fine to leave in place.
+   If you would rather keep the mirror inside an existing vault, set a **target folder** in
+   the settings; the plugin refuses to mirror into the root of a vault that already holds
+   other files.
+2. Install and enable the plugin in that vault.
+3. Open Settings → Read-only Git Mirror.
+4. Either paste the one-line **setup code** your administrator gave you, or fill in the
    repository URL, username and token by hand.
 
 Administrators can also hand out a link that configures everything in one click:
@@ -47,10 +53,14 @@ The setup JSON looks like this:
   "repoUrl": "https://example.com/team/handbook.git",
   "tokenUser": "reader",
   "token": "a-read-only-token",
+  "targetDir": "",
   "sparseFile": ".mirror-sparse",
   "hidePaths": []
 }
 ```
+
+`targetDir` empty means the vault root (a dedicated vault); a folder name puts the mirror in
+that subfolder of whichever vault the plugin runs in.
 
 **That link contains the token. Treat it as a credential** — anyone who gets it can read
 the repository.

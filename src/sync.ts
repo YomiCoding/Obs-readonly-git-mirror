@@ -191,14 +191,21 @@ export async function applyRef(a: {
 }
 
 /**
+ * Obsidian 新建库时自动生成的欢迎笔记（中文界面 欢迎.md，英文 Welcome.md）。
+ * 推荐用法是「新建一个空库专门放镜像」，而新建的库一定带着这一篇；不把它当作空库的话，
+ * 照着推荐做的每个用户都会被下面的保护拦住。
+ */
+const WELCOME_NOTES = new Set(["欢迎.md", "Welcome.md"]);
+
+/**
  * 算出真正要镜像到哪个目录，必要时建出来。
  *
  * 这道保护是一次真实事故换来的：用户在**自己已有的笔记库**里装了插件
  * （Obsidian 启动时默认打开上次的库，很容易就这么发生），配好之后远端内容直接铺进
  * 个人库根目录，和自己的笔记混在一起 —— 全程没有一句提示。
  *
- * 所以：填了子文件夹就用它（在任何库里都安全）；留空要铺根目录时，只有「库是空的」
- * 或者「本来就是我们在镜像的库」才放行。
+ * 所以：填了子文件夹就用它（在任何库里都安全）；留空要铺根目录时，只有「库是空的
+ * （允许带 Obsidian 自带的欢迎笔记）」或者「本来就是我们在镜像的库」才放行。
  */
 export async function resolveTarget(a: {
   fs: Fs; vaultPath: string; targetDir: string;
@@ -221,11 +228,12 @@ export async function resolveTarget(a: {
     .then(() => true).catch(() => false);
   if (!mirroring) {
     const entries = (await a.fs.promises.readdir(a.vaultPath))
-      .filter((n: string) => n !== ".obsidian" && !n.startsWith("."));
+      .filter((n: string) => n !== ".obsidian" && !n.startsWith(".") && !WELCOME_NOTES.has(n));
     if (entries.length > 0) {
       throw new SyncError("repo",
-        "This vault already contains other files. Set a target subfolder in the settings "
-        + "so the mirror does not mix with your own notes, or use an empty vault.");
+        "This vault already contains other files. Use a new, empty vault dedicated to the mirror "
+        + "(recommended), or set a target subfolder in the settings so the mirror does not mix "
+        + "with your own notes.");
     }
   }
   return a.vaultPath;
