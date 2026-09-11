@@ -45,6 +45,9 @@ describe("resolveTarget", () => {
       .rejects.toThrow(SyncError);
     await expect(resolveTarget({ fs, vaultPath: vault, targetDir: "" }))
       .rejects.toThrow(/子文件夹|subfolder/);
+    // 报错里要点名看到了什么：用户才知道插件跑在了哪个库里
+    await expect(resolveTarget({ fs, vaultPath: vault, targetDir: "" }))
+      .rejects.toThrow(/我的想法\.md/);
   });
 
   it("留空 + 之前已经在这里镜像过 → 继续允许，不因为自己拉下来的内容把自己拦住", async () => {

@@ -343,10 +343,13 @@ export async function resolveTarget(a: {
     const entries = (await a.fs.promises.readdir(a.vaultPath))
       .filter((n: string) => n !== ".obsidian" && !n.startsWith(".") && !WELCOME_NOTES.has(n));
     if (entries.length > 0) {
+      // 把看到的东西点出来：用户往往不知道插件正跑在哪个库里（Obsidian 默认打开上次的库），
+      // 光说「已有别的文件」他们会去删自己刚删过的文件夹，删来删去还是这条错。
+      const seen = entries.slice(0, 3).join(", ") + (entries.length > 3 ? ", …" : "");
       throw new SyncError("repo",
-        "This vault already contains other files. Use a new, empty vault dedicated to the mirror "
-        + "(recommended), or set a target subfolder in the settings so the mirror does not mix "
-        + "with your own notes.");
+        `This vault already contains other files (${seen}), so the mirror will not be written into its root. `
+        + "Create a new, empty vault dedicated to the mirror and set the plugin up there (recommended), "
+        + "or set a target subfolder in the settings so the mirror does not mix with your own notes.");
     }
   }
   return a.vaultPath;
