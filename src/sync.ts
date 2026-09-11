@@ -280,7 +280,18 @@ export async function reportDeletions(
 
 export type TreeResult = {
   landed: string[]; accepted: string[]; rejected: string[]; pending: string[]; reportError: string;
+  /** 每个 pending 路径从何时开始压住（ms）。 */
+  pendingSince: Record<string, number>;
+  /** 压住太久、服务端仍没删掉而被放回来的文件。 */
+  expired: string[];
 };
+
+/**
+ * 服务端接受的删除最多压这么久。正常几分钟内服务端就会从仓库删掉它；过了这么久还在，
+ * 要么服务端把它恢复了（管理员 restore），要么那边出了故障——两种情况都该把文件放回来，
+ * 否则这台机器上它永远消失，别人都看得到、只有你看不到。想删可以再删一次。
+ */
+export const PENDING_TTL_MS = 30 * 60_000;
 
 /**
  * 拉到 oid 之后的落盘：先看读者删了什么 → 新的删除上报 → 接受的这一轮不恢复并记进 pending
@@ -289,15 +300,26 @@ export type TreeResult = {
  */
 export async function syncTree(a: {
   fs: Fs; dir: string; oid: string; sparseFile: string; hidePaths: string[];
-  pending: string[]; report: ReportFn | null;
+  pending: string[]; pendingSince?: Record<string, number>; report: ReportFn | null; now?: number;
 }): Promise<TreeResult> {
   const { fs, dir, oid } = a;
+  const now = a.now ?? Date.now();
+  const since = { ...(a.pendingSince ?? {}) };
   const inRemote = new Set(await git.listFiles({ fs, dir, ref: oid }));
-  // 上一轮接受、远端还没删掉的：继续压住，不再上报
-  const stillPending = a.pending.filter((p) => inRemote.has(p));
+  // 上一轮接受、远端还没删掉的：继续压住，不再上报；压太久的放回来（见 PENDING_TTL_MS）
+  const expired: string[] = [];
+  const stillPending: string[] = [];
+  for (const p of a.pending) {
+    if (!inRemote.has(p)) { delete since[p]; continue; }
+    const t = since[p] ?? now;
+    since[p] = t;
+    if (now - t > PENDING_TTL_MS) { expired.push(p); delete since[p]; } else stillPending.push(p);
+  }
   const pendingSet = new Set(stillPending);
+  const expiredSet = new Set(expired);
   const missing = await detectLocalDeletions(a);
-  const fresh = missing.filter((p) => !pendingSet.has(p));
+  // 到期放回来的这一轮不当作新删除再报（否则等于刚放回来又报一次）
+  const fresh = missing.filter((p) => !pendingSet.has(p) && !expiredSet.has(p));
   let accepted: string[] = [];
   let reportError = "";
   if (fresh.length && a.report) {
@@ -310,9 +332,12 @@ export async function syncTree(a: {
   }
   const acceptedSet = new Set(accepted);
   const rejected = fresh.filter((p) => !acceptedSet.has(p));
+  for (const p of accepted) since[p] = now;
   const suppress = [...stillPending, ...accepted];
   const landed = await applyRef({ fs, dir, oid, sparseFile: a.sparseFile, hidePaths: a.hidePaths, suppress });
-  return { landed, accepted, rejected, pending: suppress, reportError };
+  const pendingSince: Record<string, number> = {};
+  for (const p of suppress) pendingSince[p] = since[p];
+  return { landed, accepted, rejected, pending: suppress, reportError, pendingSince, expired };
 }
 
 /**
@@ -371,6 +396,7 @@ export type SyncDeps = {
   fs: Fs; http: unknown; dir: string; cfg: MirrorConfig;
   /** 上一轮留下的、服务端已接受的删除。 */
   pending?: string[];
+  pendingSince?: Record<string, number>;
   /** 删除上报；null/缺省 = 不上报。 */
   report?: ReportFn | null;
 };
@@ -429,7 +455,7 @@ export async function syncOnce(d: SyncDeps): Promise<{ oid: string } & TreeResul
   const oid = await fetchRemote(d);
   const r = await syncTree({
     fs: d.fs, dir: d.dir, oid, sparseFile: d.cfg.sparseFile, hidePaths: d.cfg.hidePaths,
-    pending: d.pending ?? [], report: d.report ?? null,
+    pending: d.pending ?? [], pendingSince: d.pendingSince, report: d.report ?? null,
   });
   return { oid, ...r };
 }

@@ -15,11 +15,13 @@ type State = {
   lastSyncAt: number; lastOid: string; lastError: string;
   /** 读者删掉、服务端已接受、远端还没删的文件：每轮继续压住，不让 checkout 写回来。 */
   pendingDeletes: string[];
+  /** 每个压住的文件从何时开始（ms），压太久就放回来。 */
+  pendingSince: Record<string, number>;
 };
 
 export default class GitMirrorPlugin extends Plugin {
   cfg: MirrorConfig = { ...DEFAULT_CONFIG };
-  state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [] };
+  state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {} };
   private bar!: HTMLElement;
   private syncing = false;
   private syncStartedAt = 0;
@@ -27,8 +29,9 @@ export default class GitMirrorPlugin extends Plugin {
   async onload(): Promise<void> {
     const saved = ((await this.loadData()) ?? {}) as { cfg?: Partial<MirrorConfig>; state?: Partial<State> };
     this.cfg = { ...DEFAULT_CONFIG, ...(saved.cfg ?? {}) };
-    this.state = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], ...(saved.state ?? {}) };
+    this.state = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, ...(saved.state ?? {}) };
     if (!Array.isArray(this.state.pendingDeletes)) this.state.pendingDeletes = [];
+    if (!this.state.pendingSince || typeof this.state.pendingSince !== "object") this.state.pendingSince = {};
 
     this.bar = this.addStatusBarItem();
     this.paint();
@@ -113,9 +116,14 @@ export default class GitMirrorPlugin extends Plugin {
         ? (paths: string[]) => reportDeletions(requestUrl, cfg, paths, this.identity())
         : null;
       const r = await syncOnce({
-        fs, http: makeHttp(requestUrl), dir, cfg, pending: this.state.pendingDeletes, report,
+        fs, http: makeHttp(requestUrl), dir, cfg, pending: this.state.pendingDeletes,
+        pendingSince: this.state.pendingSince, report,
       });
       this.state.pendingDeletes = r.pending;
+      this.state.pendingSince = r.pendingSince;
+      if (r.expired.length) {
+        new Notice(`Restored ${r.expired.length} file(s): the server accepted the deletion but kept the file. Delete again if you still want it gone.`, 10_000);
+      }
       // 删除的去向必须让人看见：被接受的会从服务端删掉，没被接受的已经被写回来了。
       if (r.accepted.length) new Notice(`Reported ${r.accepted.length} deleted file(s) to the server.`);
       if (r.rejected.length) {

@@ -11,7 +11,7 @@ import git from "isomorphic-git";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config";
 import type { RequestUrlFn } from "../src/http";
-import { SyncError, applyRef, detectLocalDeletions, reportDeletions, syncTree, withTimeout } from "../src/sync";
+import { PENDING_TTL_MS, SyncError, applyRef, detectLocalDeletions, reportDeletions, syncTree, withTimeout } from "../src/sync";
 
 let dir: string;
 
@@ -148,5 +148,36 @@ describe("reportDeletions timeout", () => {
 
   it("withTimeout 正常返回时不影响结果", async () => {
     expect(await withTimeout(Promise.resolve(7), 1000, "x")).toBe(7);
+  });
+});
+
+
+describe("pending 的期限", () => {
+  it("服务端接受后 30 分钟仍没从远端删掉（比如管理员恢复了）→ 放回本地，不再压住，也不再自动上报", async () => {
+    const oid = await landed({ "docs/a.md": "a" });
+    await unlink(join(dir, "docs/a.md"));
+    const report = vi.fn().mockResolvedValue(["docs/a.md"]);
+    const t0 = 1_000_000;
+    const r1 = await syncTree({ fs, dir, oid, ...OPTS, pending: [], report, now: t0 });
+    expect(r1.pending).toEqual(["docs/a.md"]);
+    expect(r1.pendingSince).toEqual({ "docs/a.md": t0 });
+
+    const r2 = await syncTree({ fs, dir, oid, ...OPTS, pending: r1.pending, pendingSince: r1.pendingSince, report, now: t0 + PENDING_TTL_MS - 1 });
+    expect(r2.pending).toEqual(["docs/a.md"]);
+    expect(existsSync(join(dir, "docs/a.md"))).toBe(false);
+
+    const r3 = await syncTree({ fs, dir, oid, ...OPTS, pending: r2.pending, pendingSince: r2.pendingSince, report, now: t0 + PENDING_TTL_MS + 1 });
+    expect(r3.expired).toEqual(["docs/a.md"]);
+    expect(r3.pending).toEqual([]);
+    expect(existsSync(join(dir, "docs/a.md"))).toBe(true);
+    expect(report).toHaveBeenCalledTimes(1);                                  // 放回来那一轮没再报
+  });
+
+  it("老版本状态里没有 pendingSince → 从本轮开始计时", async () => {
+    const oid = await landed({ "docs/a.md": "a" });
+    await unlink(join(dir, "docs/a.md"));
+    const r = await syncTree({ fs, dir, oid, ...OPTS, pending: ["docs/a.md"], report: null, now: 5 });
+    expect(r.pending).toEqual(["docs/a.md"]);
+    expect(r.pendingSince).toEqual({ "docs/a.md": 5 });
   });
 });
