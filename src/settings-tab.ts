@@ -9,7 +9,8 @@ export interface SettingsHost extends Plugin {
 }
 
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
-type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile";
+type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile"
+  | "deleteReportUrl" | "deleteReportToken" | "reporterName";
 
 /**
  * 用 1.13 的声明式设置 API（getSettingDefinitions / getControlValue /
@@ -69,6 +70,25 @@ export class MirrorSettingTab extends PluginSettingTab {
           + "everything.",
         aliases: ["sparse", "exclude", "ignore"],
         control: { type: "text", key: "sparseFile", placeholder: ".mirror-sparse" },
+      },
+      {
+        name: "Deletion report URL",
+        desc: "Optional. When you delete a mirrored file, the plugin reports it here (HTTP POST) "
+          + "instead of restoring it; the server decides whether the deletion sticks. Leave empty "
+          + "for a purely read-only mirror where deleted files come back on the next sync.",
+        aliases: ["delete", "webhook", "report"],
+        control: { type: "text", key: "deleteReportUrl", placeholder: "https://example.com/api/vault/deletions" },
+      },
+      {
+        name: "Deletion report token",
+        desc: "Bearer token sent with deletion reports.",
+        control: { type: "text", key: "deleteReportToken" },
+      },
+      {
+        name: "Your name",
+        desc: "Recorded in the server's audit trail next to your OS user name and machine name.",
+        aliases: ["audit", "reporter"],
+        control: { type: "text", key: "reporterName", placeholder: "e.g. Zhang San" },
       },
       {
         name: "Last sync",

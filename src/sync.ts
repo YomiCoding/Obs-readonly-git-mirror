@@ -8,6 +8,7 @@
  */
 import git from "isomorphic-git";
 import { MirrorConfig } from "./config";
+import { RequestUrlFn } from "./http";
 import { visiblePaths } from "./sparse";
 
 /**
@@ -148,6 +149,8 @@ async function readSparse(fs: Fs, dir: string, oid: string, name: string): Promi
  */
 export async function applyRef(a: {
   fs: Fs; dir: string; oid: string; sparseFile: string; hidePaths: string[];
+  /** 读者删掉、服务端已接受的文件：checkout 会把它们写回来，写回来之后再删掉。 */
+  suppress?: string[];
 }): Promise<string[]> {
   const { fs, dir, oid } = a;
 
@@ -179,15 +182,125 @@ export async function applyRef(a: {
   // 这件事，不显式剪枝的话作废文件会永久残留，而且没人会察觉。
   // 范围只在 allTop 之内 —— 未跟踪的顶层项一个都不碰。
   const want = new Set(files);
+  const suppress = new Set(a.suppress ?? []);
   for (const top of ownedTop) {
     const keepTracked = landed.includes(top);
     for (const f of await walk(fs, dir, top)) {
-      if (!keepTracked || !want.has(f)) await fs.promises.unlink(`${dir}/${f}`);
+      if (!keepTracked || !want.has(f) || suppress.has(f)) await fs.promises.unlink(`${dir}/${f}`);
     }
     await pruneEmptyDirs(fs, dir, top);
   }
 
   return landed;
+}
+
+async function exists(fs: Fs, path: string): Promise<boolean> {
+  return fs.promises.stat(path).then(() => true).catch(() => false);
+}
+
+/**
+ * 读者删掉的文件 = 上一轮同步落盘过（在本地 main 的树里、顶层项没被隐藏）、这一版远端仍然有、
+ * 现在盘上却不见了的受跟踪文件。远端这一版已经删掉的不算——那是服务端的删除，不必上报。
+ * 首次同步（没有本地 main）返回空。
+ */
+export async function detectLocalDeletions(a: {
+  fs: Fs; dir: string; oid: string; sparseFile: string; hidePaths: string[];
+}): Promise<string[]> {
+  const { fs, dir, oid } = a;
+  let prevFiles: string[];
+  try {
+    const prev = await git.resolveRef({ fs, dir, ref: "refs/heads/main" });
+    prevFiles = await git.listFiles({ fs, dir, ref: prev });
+  } catch {
+    return [];
+  }
+  const sparse = await readSparse(fs, dir, oid, a.sparseFile);
+  const files = await git.listFiles({ fs, dir, ref: oid });
+  const allTop = [...new Set(files.map((f) => f.split("/")[0]))];
+  const landed = new Set(visiblePaths(allTop, sparse, a.hidePaths));
+  const inRemote = new Set(files);
+  const out: string[] = [];
+  for (const f of prevFiles) {
+    if (!landed.has(f.split("/")[0]) || !inRemote.has(f)) continue;
+    if (!(await exists(fs, `${dir}/${f}`))) out.push(f);
+  }
+  return out.sort();
+}
+
+export type Identity = { user: string; host: string };
+/** 上报函数：路径 → 服务端接受的路径。抛错 = 这一轮没报上，文件照旧恢复。 */
+export type ReportFn = (paths: string[]) => Promise<string[]>;
+
+/**
+ * 把删除 POST 给服务端。请求体 {paths, reporter, user, host}；响应 {accepted: [...]}。
+ * 非 2xx 一律抛 SyncError（文案里不带令牌）。
+ */
+export async function reportDeletions(
+  request: RequestUrlFn, cfg: MirrorConfig, paths: string[], identity: Identity,
+): Promise<string[]> {
+  const body = new TextEncoder().encode(JSON.stringify({
+    paths, reporter: cfg.reporterName, user: identity.user, host: identity.host,
+  }));
+  let res;
+  try {
+    res = await request({
+      url: cfg.deleteReportUrl, method: "POST",
+      headers: { Authorization: `Bearer ${cfg.deleteReportToken}`, "Content-Type": "application/json" },
+      body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      throw: false,
+    });
+  } catch (e) {
+    throw classify(e, cfg.deleteReportToken);
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new SyncError(res.status === 401 || res.status === 403 ? "auth" : "repo",
+      `deletion report refused (HTTP ${res.status})`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(res.arrayBuffer));
+  } catch {
+    throw new SyncError("repo", "deletion report: server returned no JSON");
+  }
+  const accepted = (parsed as { accepted?: unknown }).accepted;
+  return Array.isArray(accepted) ? accepted.filter((x): x is string => typeof x === "string") : [];
+}
+
+export type TreeResult = {
+  landed: string[]; accepted: string[]; rejected: string[]; pending: string[]; reportError: string;
+};
+
+/**
+ * 拉到 oid 之后的落盘：先看读者删了什么 → 新的删除上报 → 接受的这一轮不恢复并记进 pending
+ * （之后每轮继续压住，直到远端树里也没有它）→ 其余照旧恢复。
+ * report 为 null = 没配上报地址：删除一律恢复（纯只读镜像的老语义）。
+ */
+export async function syncTree(a: {
+  fs: Fs; dir: string; oid: string; sparseFile: string; hidePaths: string[];
+  pending: string[]; report: ReportFn | null;
+}): Promise<TreeResult> {
+  const { fs, dir, oid } = a;
+  const inRemote = new Set(await git.listFiles({ fs, dir, ref: oid }));
+  // 上一轮接受、远端还没删掉的：继续压住，不再上报
+  const stillPending = a.pending.filter((p) => inRemote.has(p));
+  const pendingSet = new Set(stillPending);
+  const missing = await detectLocalDeletions(a);
+  const fresh = missing.filter((p) => !pendingSet.has(p));
+  let accepted: string[] = [];
+  let reportError = "";
+  if (fresh.length && a.report) {
+    try {
+      const got = new Set(await a.report(fresh));
+      accepted = fresh.filter((p) => got.has(p));
+    } catch (e) {
+      reportError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const acceptedSet = new Set(accepted);
+  const rejected = fresh.filter((p) => !acceptedSet.has(p));
+  const suppress = [...stillPending, ...accepted];
+  const landed = await applyRef({ fs, dir, oid, sparseFile: a.sparseFile, hidePaths: a.hidePaths, suppress });
+  return { landed, accepted, rejected, pending: suppress, reportError };
 }
 
 /**
@@ -239,7 +352,13 @@ export async function resolveTarget(a: {
   return a.vaultPath;
 }
 
-export type SyncDeps = { fs: Fs; http: unknown; dir: string; cfg: MirrorConfig };
+export type SyncDeps = {
+  fs: Fs; http: unknown; dir: string; cfg: MirrorConfig;
+  /** 上一轮留下的、服务端已接受的删除。 */
+  pending?: string[];
+  /** 删除上报；null/缺省 = 不上报。 */
+  report?: ReportFn | null;
+};
 
 export class SyncError extends Error {
   constructor(readonly kind: "auth" | "network" | "repo", message: string) {
@@ -290,11 +409,12 @@ export async function fetchRemote(d: SyncDeps): Promise<string> {
   }
 }
 
-/** 一轮同步：拉 + 落盘。永不 commit、永不 push。 */
-export async function syncOnce(d: SyncDeps): Promise<{ oid: string; landed: string[] }> {
+/** 一轮同步：拉 + 落盘（含读者删除的上报与压制）。永不 commit、永不 push。 */
+export async function syncOnce(d: SyncDeps): Promise<{ oid: string } & TreeResult> {
   const oid = await fetchRemote(d);
-  const landed = await applyRef({
+  const r = await syncTree({
     fs: d.fs, dir: d.dir, oid, sparseFile: d.cfg.sparseFile, hidePaths: d.cfg.hidePaths,
+    pending: d.pending ?? [], report: d.report ?? null,
   });
-  return { oid, landed };
+  return { oid, ...r };
 }

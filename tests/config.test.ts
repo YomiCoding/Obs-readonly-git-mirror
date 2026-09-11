@@ -10,6 +10,9 @@ const sample = {
   targetDir: "knowledge-base",
   sparseFile: ".mirror-sparse",
   hidePaths: ["notes-internal", "README.md"],
+  deleteReportUrl: "https://host/api/vault/deletions",
+  deleteReportToken: "del-token",
+  reporterName: "Reader One",
 };
 
 describe("配置码", () => {

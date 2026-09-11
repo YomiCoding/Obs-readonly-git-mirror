@@ -21,6 +21,16 @@ export type MirrorConfig = {
   sparseFile: string;
   /** sparseFile 不存在时的兜底隐藏名单（顶层名）。 */
   hidePaths: string[];
+
+  /**
+   * 读者在库里删掉受跟踪文件时，把删除上报到这个地址（POST JSON）。留空 = 不上报，
+   * 删掉的文件下一轮照旧恢复（纯只读镜像）。服务端接受的删除不再恢复，直到远端也删掉它。
+   */
+  deleteReportUrl: string;
+  /** 上报用的 Bearer 令牌。 */
+  deleteReportToken: string;
+  /** 写进审计记录的名字。留空时服务端只有操作系统登录名和机器名可记。 */
+  reporterName: string;
 };
 
 export const DEFAULT_CONFIG: MirrorConfig = {
@@ -30,6 +40,9 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   targetDir: "",
   sparseFile: "",   // 留空 → 自动探测，见 sync.ts 的 SPARSE_CANDIDATES
   hidePaths: [],
+  deleteReportUrl: "",
+  deleteReportToken: "",
+  reporterName: "",
 };
 
 export class ConfigError extends Error {
@@ -81,6 +94,9 @@ export function decodeConfig(text: string): MirrorConfig {
     targetDir: p.targetDir === undefined ? DEFAULT_CONFIG.targetDir : String(p.targetDir),
     sparseFile: p.sparseFile === undefined ? DEFAULT_CONFIG.sparseFile : String(p.sparseFile),
     hidePaths: Array.isArray(p.hidePaths) ? p.hidePaths.map(String) : [],
+    deleteReportUrl: p.deleteReportUrl === undefined ? "" : String(p.deleteReportUrl),
+    deleteReportToken: p.deleteReportToken === undefined ? "" : String(p.deleteReportToken),
+    reporterName: p.reporterName === undefined ? "" : String(p.reporterName),
   };
 }
 

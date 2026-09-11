@@ -17,10 +17,20 @@ always see the latest version without ever pushing anything back.
 - Shows the sync state in the status bar, and says why when it fails. Silent staleness is
   the worst failure mode for a tool like this, so failures are always visible.
 
+## Deleting mirrored files
+
+By default the mirror is strictly read-only: a tracked file you delete comes back on the
+next sync. If the publisher runs an endpoint for it, set **Deletion report URL** (and its
+token): the plugin then reports what you deleted (`POST` JSON `{paths, reporter, user, host}`,
+`Authorization: Bearer <token>`), and files the server answers with in `accepted` stay
+deleted — the plugin keeps them suppressed until the remote repository drops them too. Files
+the server does not accept are restored, and a notice says so. `user` and `host` are your OS
+user name and machine name; **Your name** is an optional label for the audit trail.
+
 ## Network use
 
-This plugin talks to exactly one remote: the Git repository URL you configure. Nothing
-else. There is **no telemetry, no analytics**, and no update mechanism of its own —
+This plugin talks to the Git repository URL you configure and, only if you set one, the
+deletion report URL. Nothing else. There is **no telemetry, no analytics**, and no update mechanism of its own —
 updates come through Obsidian.
 
 Credentials you enter are stored in this plugin's `data.json` inside your vault, in plain
@@ -55,7 +65,10 @@ The setup JSON looks like this:
   "token": "a-read-only-token",
   "targetDir": "",
   "sparseFile": ".mirror-sparse",
-  "hidePaths": []
+  "hidePaths": [],
+  "deleteReportUrl": "",
+  "deleteReportToken": "",
+  "reporterName": ""
 }
 ```
 
