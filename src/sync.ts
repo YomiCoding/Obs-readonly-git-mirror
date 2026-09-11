@@ -235,21 +235,33 @@ export type ReportFn = (paths: string[]) => Promise<string[]>;
  * 把删除 POST 给服务端。请求体 {paths, reporter, user, host}；响应 {accepted: [...]}。
  * 非 2xx 一律抛 SyncError（文案里不带令牌）。
  */
+/** 上报请求的上限。requestUrl 自己没有超时：服务端滚动更新时一个被接住却永不回应的连接
+ *  会让这一轮同步永远挂着，之后每分钟的同步都被「上一轮还没跑完」跳过——库就此静默停更。 */
+export const REPORT_TIMEOUT_MS = 30_000;
+
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new SyncError("network", `${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e: unknown) => { clearTimeout(t); reject(e instanceof Error ? e : new Error(String(e))); });
+  });
+}
+
 export async function reportDeletions(
-  request: RequestUrlFn, cfg: MirrorConfig, paths: string[], identity: Identity,
+  request: RequestUrlFn, cfg: MirrorConfig, paths: string[], identity: Identity, timeoutMs = REPORT_TIMEOUT_MS,
 ): Promise<string[]> {
   const body = new TextEncoder().encode(JSON.stringify({
     paths, reporter: cfg.reporterName, user: identity.user, host: identity.host,
   }));
   let res;
   try {
-    res = await request({
+    res = await withTimeout(request({
       url: cfg.deleteReportUrl, method: "POST",
       headers: { Authorization: `Bearer ${cfg.deleteReportToken}`, "Content-Type": "application/json" },
       body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
       throw: false,
-    });
+    }), timeoutMs, "deletion report");
   } catch (e) {
+    if (e instanceof SyncError) throw e;          // 超时已经分好类了
     throw classify(e, cfg.deleteReportToken);
   }
   if (res.status < 200 || res.status >= 300) {

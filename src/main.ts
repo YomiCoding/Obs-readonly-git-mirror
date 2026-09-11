@@ -7,6 +7,9 @@ import { Identity, MirrorFs, SyncError, reportDeletions, resolveTarget, syncOnce
 
 /** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。 */
 const PULL_INTERVAL_MS = 60_000;
+/** 一轮同步超过这么久还没回来，就当它已经死掉：解锁，让下一轮照常跑。
+ *  实测撞到过：服务端滚动更新期间一个请求永远不回应，之后 20 多分钟每一轮都被跳过，状态栏却毫无异常。 */
+const STUCK_AFTER_MS = 5 * 60_000;
 
 type State = {
   lastSyncAt: number; lastOid: string; lastError: string;
@@ -19,6 +22,7 @@ export default class GitMirrorPlugin extends Plugin {
   state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [] };
   private bar!: HTMLElement;
   private syncing = false;
+  private syncStartedAt = 0;
 
   async onload(): Promise<void> {
     const saved = ((await this.loadData()) ?? {}) as { cfg?: Partial<MirrorConfig>; state?: Partial<State> };
@@ -89,8 +93,14 @@ export default class GitMirrorPlugin extends Plugin {
 
   async syncNow(): Promise<void> {
     // 上一轮没跑完就跳过：定时器与手动同步可能撞车，两个 git 操作同动一个工作区会互相踩。
+    // 但挂得太久的那一轮不能永远占着锁：视作已死，放行。
+    if (this.syncing && Date.now() - this.syncStartedAt > STUCK_AFTER_MS) {
+      this.syncing = false;
+      new Notice("Mirror: previous sync hung and was abandoned; syncing again.", 8000);
+    }
     if (this.syncing || !isConfigured(this.cfg)) return;
     this.syncing = true;
+    this.syncStartedAt = Date.now();
     this.paint();
     try {
       const fs = this.nodeFs();

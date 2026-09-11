@@ -24,7 +24,9 @@ next sync. If the publisher runs an endpoint for it, set **Deletion report URL**
 token): the plugin then reports what you deleted (`POST` JSON `{paths, reporter, user, host}`,
 `Authorization: Bearer <token>`), and files the server answers with in `accepted` stay
 deleted — the plugin keeps them suppressed until the remote repository drops them too. Files
-the server does not accept are restored, and a notice says so. `user` and `host` are your OS
+the server does not accept are restored, and a notice says so. A report that gets no answer
+within 30 seconds counts as failed, and a sync that hangs for more than five minutes is abandoned
+so the next one can run. `user` and `host` are your OS
 user name and machine name; **Your name** is an optional label for the audit trail.
 
 ## Network use

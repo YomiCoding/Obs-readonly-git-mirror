@@ -11,7 +11,7 @@ import git from "isomorphic-git";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config";
 import type { RequestUrlFn } from "../src/http";
-import { SyncError, applyRef, detectLocalDeletions, reportDeletions, syncTree } from "../src/sync";
+import { SyncError, applyRef, detectLocalDeletions, reportDeletions, syncTree, withTimeout } from "../src/sync";
 
 let dir: string;
 
@@ -132,5 +132,21 @@ describe("syncTree", () => {
     expect(r2.rejected).toEqual(["docs/a.md"]);
     expect(r2.reportError).toContain("连不上");
     expect(existsSync(join(dir, "docs/a.md"))).toBe(true);
+  });
+});
+
+
+describe("reportDeletions timeout", () => {
+  it("服务端永不回应 → 限时抛 SyncError(network)，同步不会永远挂住", async () => {
+    const never = vi.fn<RequestUrlFn>().mockReturnValue(new Promise(() => undefined));
+    const cfg = { ...DEFAULT_CONFIG, deleteReportUrl: "https://kb/api", deleteReportToken: "tok" };
+    const err: unknown = await reportDeletions(never, cfg, ["docs/a.md"], IDENTITY, 20).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SyncError);
+    expect((err as SyncError).kind).toBe("network");
+    expect(String(err)).toContain("timed out");
+  });
+
+  it("withTimeout 正常返回时不影响结果", async () => {
+    expect(await withTimeout(Promise.resolve(7), 1000, "x")).toBe(7);
   });
 });
