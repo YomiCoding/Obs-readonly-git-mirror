@@ -1,9 +1,10 @@
 import { Notice, Plugin, requestUrl } from "obsidian";
-import { DEFAULT_CONFIG, MirrorConfig, decodeConfig, isConfigured } from "./config";
+import { ConfigError, DEFAULT_CONFIG, MirrorConfig, decodeSetupCode, isConfigured } from "./config";
 import { makeHttp } from "./http";
+import { InboxError, InboxState, VaultIO, claimDevice, emptyInboxState, revokeDevice, syncInbox } from "./inbox";
 import { MirrorSettingTab } from "./settings-tab";
 import { statusText } from "./status";
-import { Identity, MirrorFs, SyncError, reportDeletions, resolveTarget, syncOnce } from "./sync";
+import { Identity, MirrorFs, SyncError, reportDeletions, resolveTarget, retireMirror, syncOnce } from "./sync";
 
 /** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。 */
 const PULL_INTERVAL_MS = 60_000;
@@ -17,11 +18,13 @@ type State = {
   pendingDeletes: string[];
   /** 每个压住的文件从何时开始（ms），压太久就放回来。 */
   pendingSince: Record<string, number>;
+  /** inbox 模式的本地账本与待补发的确认。 */
+  inbox: InboxState;
 };
 
 export default class GitMirrorPlugin extends Plugin {
   cfg: MirrorConfig = { ...DEFAULT_CONFIG };
-  state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {} };
+  state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState() };
   private bar!: HTMLElement;
   private syncing = false;
   private syncStartedAt = 0;
@@ -29,29 +32,26 @@ export default class GitMirrorPlugin extends Plugin {
   async onload(): Promise<void> {
     const saved = ((await this.loadData()) ?? {}) as { cfg?: Partial<MirrorConfig>; state?: Partial<State> };
     this.cfg = { ...DEFAULT_CONFIG, ...(saved.cfg ?? {}) };
-    this.state = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, ...(saved.state ?? {}) };
+    this.state = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState(), ...(saved.state ?? {}) };
     if (!Array.isArray(this.state.pendingDeletes)) this.state.pendingDeletes = [];
     if (!this.state.pendingSince || typeof this.state.pendingSince !== "object") this.state.pendingSince = {};
+    if (!this.state.inbox || typeof this.state.inbox.ledger !== "object" || !Array.isArray(this.state.inbox.pendingAcks)) {
+      this.state.inbox = emptyInboxState();
+    }
 
     this.bar = this.addStatusBarItem();
     this.paint();
 
     this.addSettingTab(new MirrorSettingTab(this.app, this));
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.syncNow() });
+    this.addCommand({ id: "unlink-device", name: "Unlink this device (inbox mode)", callback: () => void this.unlinkDevice() });
 
     // obsidian://readonly-git-mirror?config=<base64url>
     // 管理员发一条链接，用户点一下就配好，不用手打地址和令牌。
     this.registerObsidianProtocolHandler("readonly-git-mirror", async (params) => {
       const raw = params.config;
       if (!raw) return;
-      try {
-        this.cfg = decodeConfig(String(raw));
-        await this.saveAll();
-        new Notice("Setup code applied");
-        void this.syncNow();
-      } catch (e) {
-        new Notice(String(e instanceof Error ? e.message : e), 8000);
-      }
+      await this.applySetupCode(String(raw));
     });
 
     this.app.workspace.onLayoutReady(() => void this.syncNow());
@@ -63,7 +63,98 @@ export default class GitMirrorPlugin extends Plugin {
   }
 
   private paint(): void {
-    this.bar.setText(statusText({ syncing: this.syncing, ...this.state }));
+    this.bar.setText(statusText({ syncing: this.syncing, ...this.state, mode: this.cfg.mode }));
+  }
+
+  /** Setup codes come from the settings field or an obsidian:// link. Errors are shown, never swallowed. */
+  async applySetupCode(raw: string): Promise<boolean> {
+    try {
+      const code = decodeSetupCode(raw);
+      if (code.kind === "git") {
+        this.cfg = code.cfg;
+        await this.saveAll();
+        new Notice("Setup code applied");
+        void this.syncNow();
+        return true;
+      }
+      const label = this.identity().host || "Obsidian";
+      const { token, deviceId } = await claimDevice(requestUrl, code.endpoint, code.claim, label);
+      const wasMirror = this.cfg.mode !== "inbox" && Boolean(this.cfg.repoUrl);
+      this.cfg = { ...DEFAULT_CONFIG, mode: "inbox", endpoint: code.endpoint, deviceToken: token, deviceId, targetDir: this.cfg.targetDir };
+      this.state.inbox = emptyInboxState();
+      this.state.lastError = "";
+      await this.saveAll();
+      if (wasMirror) await this.retireOldMirror();
+      new Notice("This device is linked. New items arrive on the next sync.");
+      void this.syncNow();
+      return true;
+    } catch (e) {
+      const msg = e instanceof ConfigError || e instanceof InboxError ? e.message : String(e instanceof Error ? e.message : e);
+      new Notice(msg, 10_000);
+      return false;
+    }
+  }
+
+  private async retireOldMirror(): Promise<void> {
+    try {
+      const name = this.cfg.targetDir.trim();
+      const dir = name ? `${this.vaultPath()}/${name}` : this.vaultPath();
+      const r = await retireMirror(this.nodeFs(), dir);
+      if (r.removed || r.kept) {
+        new Notice(`Removed ${r.removed} unchanged file(s) from the previous mirror; kept ${r.kept} file(s) you had edited.`, 10_000);
+      }
+    } catch (e) {
+      new Notice(`Could not clean up the previous mirror: ${e instanceof Error ? e.message : String(e)}`, 10_000);
+    }
+  }
+
+  async unlinkDevice(): Promise<void> {
+    if (this.cfg.mode !== "inbox") return;
+    try {
+      await revokeDevice(requestUrl, this.cfg.endpoint, this.cfg.deviceToken);
+    } catch {
+      // forget the token locally even when the server is unreachable; it can also be revoked from the server side
+    }
+    this.cfg = { ...DEFAULT_CONFIG, targetDir: this.cfg.targetDir };
+    this.state.inbox = emptyInboxState();
+    await this.saveAll();
+    this.paint();
+    new Notice("This device is unlinked. Files already in the vault stay.");
+  }
+
+  /** The Obsidian vault adapter, shaped as what inbox mode needs. */
+  private vaultIO(): VaultIO {
+    const a = this.app.vault.adapter;
+    return {
+      exists: (p) => a.exists(p),
+      read: async (p) => new Uint8Array(await a.readBinary(p)),
+      write: (p, d) => a.writeBinary(p, d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) as ArrayBuffer),
+      rename: (from, to) => a.rename(from, to),
+      mkdirp: async (p) => {
+        let cur = "";
+        for (const seg of p.split("/")) {
+          cur = cur ? `${cur}/${seg}` : seg;
+          if (!(await a.exists(cur))) await a.mkdir(cur);
+        }
+      },
+    };
+  }
+
+  private async syncInboxRound(): Promise<void> {
+    const name = this.cfg.targetDir.trim();
+    if (name.includes("/") || name.includes(String.fromCharCode(92)) || name === "." || name === "..") {
+      throw new SyncError("repo", "Target folder must be a single folder name, without slashes.");
+    }
+    const r = await syncInbox({
+      req: requestUrl, endpoint: this.cfg.endpoint, token: this.cfg.deviceToken, io: this.vaultIO(), root: name,
+      state: this.state.inbox,
+      persist: async (s) => {
+        this.state.inbox = s;
+        await this.saveAll();
+      },
+    });
+    if (r.failed) new Notice(`Inbox: ${r.failed} item(s) could not be saved and will be retried.`, 8000);
+    this.state.lastOid = "";
   }
 
   /** vault 根目录的绝对路径。移动端的 adapter 没有 basePath，因此暂不支持。 */
@@ -106,6 +197,12 @@ export default class GitMirrorPlugin extends Plugin {
     this.syncStartedAt = Date.now();
     this.paint();
     try {
+      if (this.cfg.mode === "inbox") {
+        await this.syncInboxRound();
+        this.state.lastSyncAt = Date.now();
+        this.state.lastError = "";
+        return;
+      }
       const fs = this.nodeFs();
       // 镜像到哪个目录由配置决定，并在这一步拦住「铺进别人已有的笔记库」。
       const dir = await resolveTarget({
@@ -134,7 +231,7 @@ export default class GitMirrorPlugin extends Plugin {
       this.state.lastSyncAt = Date.now();
       this.state.lastError = "";
     } catch (e) {
-      const msg = e instanceof SyncError ? e.message : String(e);
+      const msg = e instanceof SyncError || e instanceof InboxError ? e.message : String(e);
       // 只在从「好」变「坏」时弹一次：每分钟弹一次会把用户逼疯，
       // 而状态栏一直挂着失败，信息不会丢。
       if (!this.state.lastError) new Notice(`Mirror sync failed: ${msg}`, 10_000);

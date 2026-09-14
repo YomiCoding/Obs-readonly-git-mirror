@@ -1,11 +1,70 @@
 # Read-only Git Mirror
 
-Mirror a Git repository into your Obsidian vault — one way, read-only.
+Bring files into your Obsidian vault — one way. Two modes:
 
-Useful when a team publishes a knowledge base as a Git repository and readers should
-always see the latest version without ever pushing anything back.
+- **Mirror mode**: mirror a Git repository, read-only. Useful when a team publishes a
+  knowledge base as a Git repository and readers should always see the latest version.
+- **Inbox mode**: receive items addressed to you from a personal inbox server. Items are
+  only ever added to your vault; the server may delete its copy once you have them.
 
-## What it does
+## Inbox mode
+
+### Linking a device
+
+Your server hands you a one-time **setup code** (it expires quickly and works once). Paste it
+into Settings → Read-only Git Mirror → **Setup code**. The plugin exchanges it for a device token
+and stores only the server address, the token and a device id — not the code. Link each
+computer separately; every device has its own token and can be unlinked on its own
+(command palette: **Unlink this device**, or from the server side).
+
+If the vault was previously used in mirror mode, switching removes the mirrored files you never
+edited and the local `.git` folder; files you edited, and your own notes, stay. A notice says how
+many files were removed and kept.
+
+### What a sync does
+
+On startup and every 60 seconds:
+
+1. Resends confirmations that failed last time.
+2. Lists the items waiting for this device.
+3. Downloads each file to a temporary `.part` file, renames it into place, reads it back and
+   checks its SHA-256. Attachments are written before the page that links to them.
+4. Records the item in a local ledger (saved in `data.json`) and only then confirms receipt.
+
+Guarantees:
+
+- **Never deletes a file and never overwrites a file it did not write.** If a different file
+  already sits at the target path, the item is written next to it with a `-<id>` suffix.
+- **Deleted stays deleted.** An item already in the ledger is confirmed again without rewriting,
+  so a file you removed does not come back.
+- **No confirmation without a verified write.** A failed download, a hash mismatch or a failed
+  read-back leaves the item unconfirmed; it is retried on the next sync.
+- Paths come from the server and are validated: no `..`, no absolute paths, no backslashes, no
+  leading dots, no reserved or control characters.
+
+A `401` answer means the token was revoked; the status bar says the device is unlinked and syncing
+stops. Files already in the vault stay.
+
+### Protocol
+
+Every request except `claim` carries `Authorization: Bearer <device token>`; responses must not be cached.
+
+```
+POST {endpoint}/claim                  {code, label}  -> {token, device_id}
+GET  {endpoint}/items?limit=50                        -> {items: [{id, created_at, files: [{seq, path, size, sha256}]}], more}
+GET  {endpoint}/items/{id}/files/{seq}                -> raw bytes
+POST {endpoint}/ack                    {ids, failed}  -> {acked}
+GET  {endpoint}/device                                -> device status
+POST {endpoint}/device/revoke                         -> 204
+```
+
+The setup code is base64url of `{"v": 2, "endpoint": "https://…", "claim": "…"}`.
+
+**The setup code and the device token are credentials.** Anyone holding them can receive your items.
+
+## Mirror mode
+
+### What it does
 
 - Pulls a branch of a Git repository into the vault folder, on startup and every 60 seconds.
 - **Never commits, never pushes.** A read-only token is enough.
@@ -17,7 +76,7 @@ always see the latest version without ever pushing anything back.
 - Shows the sync state in the status bar, and says why when it fails. Silent staleness is
   the worst failure mode for a tool like this, so failures are always visible.
 
-## Deleting mirrored files
+### Deleting mirrored files
 
 By default the mirror is strictly read-only: a tracked file you delete comes back on the
 next sync. If the publisher runs an endpoint for it, set **Deletion report URL** (and its
@@ -31,15 +90,15 @@ user name and machine name; **Your name** is an optional label for the audit tra
 
 ## Network use
 
-This plugin talks to the Git repository URL you configure and, only if you set one, the
-deletion report URL. Nothing else. There is **no telemetry, no analytics**, and no update mechanism of its own —
+In mirror mode this plugin talks to the Git repository URL you configure and, only if you set one, the
+deletion report URL. In inbox mode it talks only to the inbox server named in your setup code. Nothing else. There is **no telemetry, no analytics**, and no update mechanism of its own —
 updates come through Obsidian.
 
 Credentials you enter are stored in this plugin's `data.json` inside your vault, in plain
 text — the same way a Git remote URL with an embedded token would be. **Use a read-only
 token.**
 
-## Setup
+### Setup
 
 1. Create a new, empty vault dedicated to the mirror (recommended). Obsidian's vault
    switcher then lets you move between it and your own vaults, and nothing is ever written
@@ -80,7 +139,7 @@ that subfolder of whichever vault the plugin runs in.
 **That link contains the token. Treat it as a credential** — anyone who gets it can read
 the repository.
 
-## Hiding parts of the repository
+### Hiding parts of the repository
 
 If the repository contains files meant for tooling rather than readers, it can ship a
 sparse list (default file name `.mirror-sparse`) in Git non-cone format:

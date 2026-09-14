@@ -11,10 +11,11 @@ function hhmm(t: number): string {
  * 还挂着昨天的时间戳，用户会以为一切正常。
  */
 export function statusText(s: {
-  syncing: boolean; lastSyncAt: number; lastError: string;
+  syncing: boolean; lastSyncAt: number; lastError: string; mode?: "git" | "inbox";
 }): string {
-  if (s.syncing) return "Mirror: syncing…";
-  if (s.lastError) return `Mirror: failed · ${s.lastError}`;
-  if (!s.lastSyncAt) return "Mirror: not synced yet";
-  return `Mirror: synced ${hhmm(s.lastSyncAt)}`;
+  const label = s.mode === "inbox" ? "Inbox" : "Mirror";
+  if (s.syncing) return `${label}: syncing…`;
+  if (s.lastError) return `${label}: failed · ${s.lastError}`;
+  if (!s.lastSyncAt) return `${label}: not synced yet`;
+  return `${label}: synced ${hhmm(s.lastSyncAt)}`;
 }

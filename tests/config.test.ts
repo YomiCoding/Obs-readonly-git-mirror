@@ -13,6 +13,10 @@ const sample = {
   deleteReportUrl: "https://host/api/vault/deletions",
   deleteReportToken: "del-token",
   reporterName: "Reader One",
+  mode: "git" as const,
+  endpoint: "",
+  deviceToken: "",
+  deviceId: "",
 };
 
 describe("配置码", () => {

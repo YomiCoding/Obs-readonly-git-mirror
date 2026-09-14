@@ -1,9 +1,9 @@
 {
   "id": "readonly-git-mirror",
   "name": "Read-only Git Mirror",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "minAppVersion": "1.13.0",
-  "description": "Mirror a Git repository into your vault, one-way and read-only. Never commits, never pushes, never touches untracked files.",
+  "description": "Mirror a Git repository into your vault read-only, or receive files from a personal inbox server. One-way: never commits, never pushes.",
   "author": "YomiCoding",
   "isDesktopOnly": true,
   "authorUrl": "https://github.com/YomiCoding"

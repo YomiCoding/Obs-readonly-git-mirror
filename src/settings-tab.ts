@@ -1,11 +1,14 @@
-import { App, Notice, Plugin, PluginSettingTab, SettingDefinitionItem } from "obsidian";
-import { ConfigError, MirrorConfig, decodeConfig } from "./config";
+import { App, Plugin, PluginSettingTab, SettingDefinitionItem } from "obsidian";
+import { MirrorConfig } from "./config";
+import { SetupCodeGate } from "./setup-gate";
 
 export interface SettingsHost extends Plugin {
   cfg: MirrorConfig;
   state: { lastSyncAt: number; lastOid: string; lastError: string };
   saveAll(): Promise<void>;
   syncNow(): Promise<void>;
+  applySetupCode(raw: string): Promise<boolean>;
+  unlinkDevice(): Promise<void>;
 }
 
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
@@ -25,6 +28,8 @@ type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "spar
  * 双份出错面，而换来的是一个几乎不存在的用户群（Obsidian 自动更新，1.13 已是现行版）。
  */
 export class MirrorSettingTab extends PluginSettingTab {
+  private setupGate = new SetupCodeGate();
+
   constructor(app: App, private host: SettingsHost) {
     super(app, host);
   }
@@ -32,6 +37,51 @@ export class MirrorSettingTab extends PluginSettingTab {
   getSettingDefinitions(): SettingDefinitionItem[] {
     const st = this.host.state;
     const when = st.lastSyncAt ? new Date(st.lastSyncAt).toLocaleString() : "never";
+
+    if (this.host.cfg.mode === "inbox") {
+      let server = this.host.cfg.endpoint;
+      try {
+        server = new URL(server).host;
+      } catch {
+        // keep the raw value
+      }
+      return [
+        {
+          name: "Setup code",
+          desc: "Paste a new setup code to link this device again or to switch servers.",
+          aliases: ["config", "token", "link"],
+          control: { type: "text", key: "setupCode", placeholder: "paste here" },
+        },
+        {
+          name: "Target folder",
+          desc: "Leave empty to write into the vault root (recommended: a vault dedicated to this). "
+            + "Set a single folder name, no slashes, to keep received files in one folder.",
+          aliases: ["folder", "directory", "location"],
+          control: { type: "text", key: "targetDir", placeholder: "inbox" },
+        },
+        { name: "Server", desc: `Receiving from ${server}.` },
+        {
+          name: "Last sync",
+          desc: st.lastError ? `Failed: ${st.lastError}` : when,
+          action: () => {
+            void this.host.syncNow().then(() => this.update());
+          },
+        },
+        {
+          name: "Unlink this device",
+          desc: "Stops receiving on this device. Files already in the vault stay.",
+          action: () => {
+            void this.host.unlinkDevice().then(() => this.update());
+          },
+        },
+        {
+          name: "How it works",
+          desc: "Inbox mode only adds files: it never deletes a file and never overwrites a file it did not write. "
+            + "After a file has been saved and verified here, the server deletes its own copy after a grace period, "
+            + "so this vault holds the only copy. Deleting a file here is final.",
+        },
+      ];
+    }
 
     return [
       {
@@ -111,7 +161,7 @@ export class MirrorSettingTab extends PluginSettingTab {
   getControlValue(key: string): unknown {
     // 配置码是一次性输入，不回显：它含令牌，留在输入框里等于把凭据摆在设置页上。
     if (key === "setupCode") return "";
-    return this.host.cfg[key as Exclude<Key, "setupCode">] ?? "";
+    return (this.host.cfg as Record<Exclude<Key, "setupCode">, string>)[key as Exclude<Key, "setupCode">] ?? "";
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
@@ -120,20 +170,15 @@ export class MirrorSettingTab extends PluginSettingTab {
     const v = typeof value === "string" ? value.trim() : "";
 
     if (key === "setupCode") {
-      if (!v) return;
-      try {
-        this.host.cfg = decodeConfig(v);
-        await this.host.saveAll();
-        new Notice("Setup code applied");
-        this.update();
-      } catch (e) {
-        // 粘错了必须立刻知道。静默留在未配置状态就是「装了但不动」。
-        new Notice(e instanceof ConfigError ? e.message : String(e), 8000);
-      }
+      // 同一个码失焦时会再报一次：一次性码第二次提交必被拒，刚绑定成功就弹报错。只有成功用过的才拦。
+      if (!this.setupGate.shouldApply(v)) return;
+      // 粘错了必须立刻知道：applySetupCode 自己弹出原因。静默留在未配置状态就是「装了但不动」。
+      if (await this.host.applySetupCode(v)) this.setupGate.applied(v);
+      this.update();
       return;
     }
 
-    this.host.cfg[key as Exclude<Key, "setupCode">] = v;
+    (this.host.cfg as Record<Exclude<Key, "setupCode">, string>)[key as Exclude<Key, "setupCode">] = v;
     await this.host.saveAll();
   }
 }

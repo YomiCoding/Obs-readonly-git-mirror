@@ -31,6 +31,14 @@ export type MirrorConfig = {
   deleteReportToken: string;
   /** 写进审计记录的名字。留空时服务端只有操作系统登录名和机器名可记。 */
   reporterName: string;
+
+  /** "git" = 只读镜像一个 Git 仓库；"inbox" = 从个人收件箱收取文件（见 inbox.ts）。 */
+  mode: "git" | "inbox";
+  /** inbox 模式：收件接口根地址。 */
+  endpoint: string;
+  /** inbox 模式：本设备的令牌（用配置码换来）。 */
+  deviceToken: string;
+  deviceId: string;
 };
 
 export const DEFAULT_CONFIG: MirrorConfig = {
@@ -43,6 +51,10 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   deleteReportUrl: "",
   deleteReportToken: "",
   reporterName: "",
+  mode: "git",
+  endpoint: "",
+  deviceToken: "",
+  deviceId: "",
 };
 
 export class ConfigError extends Error {
@@ -97,10 +109,43 @@ export function decodeConfig(text: string): MirrorConfig {
     deleteReportUrl: p.deleteReportUrl === undefined ? "" : String(p.deleteReportUrl),
     deleteReportToken: p.deleteReportToken === undefined ? "" : String(p.deleteReportToken),
     reporterName: p.reporterName === undefined ? "" : String(p.reporterName),
+    mode: "git",
+    endpoint: "",
+    deviceToken: "",
+    deviceId: "",
   };
+}
+
+/**
+ * 配置码有两种：旧的 Git 镜像配置（一整份 MirrorConfig），和收件箱领取码 {v: 2, endpoint, claim}。
+ * 后者只是一次性的领取码，插件拿它去换本设备的令牌，自己不保存它。
+ */
+export type SetupCode =
+  | { kind: "git"; cfg: MirrorConfig }
+  | { kind: "claim"; endpoint: string; claim: string };
+
+export function decodeSetupCode(text: string): SetupCode {
+  const raw = (text || "").trim();
+  if (!raw) throw new ConfigError("配置码是空的");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    throw new ConfigError("配置码格式不对，请重新索取");
+  }
+  if (parsed && typeof parsed === "object" && (parsed as { v?: unknown }).v === 2) {
+    const p = parsed as { endpoint?: unknown; claim?: unknown };
+    if (typeof p.endpoint !== "string" || !(p.endpoint.startsWith("https://") || p.endpoint.startsWith("http://"))) {
+      throw new ConfigError("配置码里没有有效的服务地址");
+    }
+    if (typeof p.claim !== "string" || !p.claim) throw new ConfigError("配置码里没有领取码");
+    return { kind: "claim", endpoint: p.endpoint, claim: p.claim };
+  }
+  return { kind: "git", cfg: decodeConfig(raw) };
 }
 
 /** 没配全就别发请求：省得每分钟朝空地址打一次，还把错误刷满状态栏。 */
 export function isConfigured(c: MirrorConfig): boolean {
+  if (c.mode === "inbox") return Boolean(c.endpoint && c.deviceToken);
   return Boolean(c.repoUrl && c.token);
 }

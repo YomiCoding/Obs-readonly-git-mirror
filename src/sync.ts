@@ -392,6 +392,50 @@ export async function resolveTarget(a: {
   return a.vaultPath;
 }
 
+async function removeTree(fs: Fs, path: string): Promise<void> {
+  let st;
+  try {
+    st = await fs.promises.stat(path);
+  } catch {
+    return;
+  }
+  if (st.isDirectory()) {
+    for (const name of await fs.promises.readdir(path)) await removeTree(fs, `${path}/${name}`);
+    await fs.promises.rmdir(path);
+  } else {
+    await fs.promises.unlink(path);
+  }
+}
+
+/**
+ * Switching a folder from mirror mode to inbox mode: remove the mirrored files that are still exactly
+ * as the mirror left them, keep anything the user changed, and delete the local repository, whose
+ * object store holds the whole mirrored history. Inbox mode never deletes files, so this is the last cleanup.
+ */
+export async function retireMirror(fs: Fs, dir: string): Promise<{ removed: number; kept: number }> {
+  if (!(await exists(fs, `${dir}/.git`))) return { removed: 0, kept: 0 };
+  let removed = 0;
+  let kept = 0;
+  const head = await git.resolveRef({ fs, dir, ref: "refs/heads/main" }).catch(() => null);
+  if (head) {
+    const matrix = await git.statusMatrix({ fs, dir, ref: "refs/heads/main" });
+    const tops = new Set<string>();
+    for (const [filepath, inHead, workdir] of matrix) {
+      if (inHead !== 1) continue;
+      tops.add(filepath.split("/")[0]);
+      if (workdir === 1) {
+        await fs.promises.unlink(`${dir}/${filepath}`);
+        removed++;
+      } else if (workdir === 2) {
+        kept++;
+      }
+    }
+    for (const top of tops) await pruneEmptyDirs(fs, dir, top);
+  }
+  await removeTree(fs, `${dir}/.git`);
+  return { removed, kept };
+}
+
 export type SyncDeps = {
   fs: Fs; http: unknown; dir: string; cfg: MirrorConfig;
   /** 上一轮留下的、服务端已接受的删除。 */
