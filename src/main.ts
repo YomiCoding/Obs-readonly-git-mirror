@@ -4,10 +4,10 @@ import { makeHttp } from "./http";
 import { InboxError, InboxState, VaultIO, claimDevice, emptyInboxState, revokeDevice, syncInbox } from "./inbox";
 import { MirrorSettingTab } from "./settings-tab";
 import { statusText } from "./status";
+import { TICK_MS, dueForScheduledSync } from "./schedule";
 import { Identity, MirrorFs, SyncError, reportDeletions, resolveTarget, retireMirror, syncOnce } from "./sync";
 
-/** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。 */
-const PULL_INTERVAL_MS = 60_000;
+/** 写死不给用户调：关掉自动同步不会有任何提示，只会慢慢变旧。节奏按模式分，见 schedule.ts。 */
 /** 一轮同步超过这么久还没回来，就当它已经死掉：解锁，让下一轮照常跑。
  *  实测撞到过：服务端滚动更新期间一个请求永远不回应，之后 20 多分钟每一轮都被跳过，状态栏却毫无异常。 */
 const STUCK_AFTER_MS = 5 * 60_000;
@@ -28,6 +28,7 @@ export default class GitMirrorPlugin extends Plugin {
   private bar!: HTMLElement;
   private syncing = false;
   private syncStartedAt = 0;
+  private lastAttemptAt = 0;
 
   async onload(): Promise<void> {
     const saved = ((await this.loadData()) ?? {}) as { cfg?: Partial<MirrorConfig>; state?: Partial<State> };
@@ -55,7 +56,7 @@ export default class GitMirrorPlugin extends Plugin {
     });
 
     this.app.workspace.onLayoutReady(() => void this.syncNow());
-    this.registerInterval(window.setInterval(() => void this.syncNow(), PULL_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => void this.tick(), TICK_MS));
   }
 
   async saveAll(): Promise<void> {
@@ -185,6 +186,12 @@ export default class GitMirrorPlugin extends Plugin {
     }
   }
 
+  /** 定时器每 10 秒响一次；收件箱模式每次都同步，镜像模式仍是每分钟一次。 */
+  private async tick(): Promise<void> {
+    if (!dueForScheduledSync(this.cfg.mode, this.lastAttemptAt, Date.now())) return;
+    await this.syncNow();
+  }
+
   async syncNow(): Promise<void> {
     // 上一轮没跑完就跳过：定时器与手动同步可能撞车，两个 git 操作同动一个工作区会互相踩。
     // 但挂得太久的那一轮不能永远占着锁：视作已死，放行。
@@ -195,6 +202,7 @@ export default class GitMirrorPlugin extends Plugin {
     if (this.syncing || !isConfigured(this.cfg)) return;
     this.syncing = true;
     this.syncStartedAt = Date.now();
+    this.lastAttemptAt = this.syncStartedAt;
     this.paint();
     try {
       if (this.cfg.mode === "inbox") {

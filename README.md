@@ -23,7 +23,7 @@ many files were removed and kept.
 
 ### What a sync does
 
-On startup and every 60 seconds:
+On startup and every 10 seconds:
 
 1. Resends confirmations that failed last time.
 2. Lists the items waiting for this device.
