@@ -17,6 +17,7 @@ const sample = {
   endpoint: "",
   deviceToken: "",
   deviceId: "",
+  sharedSync: true,
 };
 
 describe("配置码", () => {

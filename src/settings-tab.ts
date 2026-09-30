@@ -4,7 +4,7 @@ import { SetupCodeGate } from "./setup-gate";
 
 export interface SettingsHost extends Plugin {
   cfg: MirrorConfig;
-  state: { lastSyncAt: number; lastOid: string; lastError: string };
+  state: { lastSyncAt: number; lastOid: string; lastError: string; shared: { name: string; entries: number; dir: string }; sharedError: string };
   saveAll(): Promise<void>;
   syncNow(): Promise<void>;
   applySetupCode(raw: string): Promise<boolean>;
@@ -14,6 +14,8 @@ export interface SettingsHost extends Plugin {
 /** 设置项在存储里的键。声明式 API 用它来路由读写。 */
 type Key = "setupCode" | "repoUrl" | "tokenUser" | "token" | "targetDir" | "sparseFile"
   | "deleteReportUrl" | "deleteReportToken" | "reporterName";
+/** 唯一的开关类设置项，值是布尔。 */
+const SHARED_SYNC = "sharedSync";
 
 /**
  * 用 1.13 的声明式设置 API（getSettingDefinitions / getControlValue /
@@ -61,6 +63,19 @@ export class MirrorSettingTab extends PluginSettingTab {
         },
         { name: "服务器", desc: `正在从 ${server} 接收。` },
         {
+          name: "同步共享知识库",
+          desc: "打开时，你所在的共享知识库会镜像到这个库里单独的文件夹：别人新增的会出现，被删除的会消失。"
+            + "关掉会移除没改过的共享副本，改过的保留。",
+          aliases: ["共享", "shared", "library"],
+          control: { type: "toggle", key: SHARED_SYNC },
+        },
+        {
+          name: "共享知识库",
+          desc: st.sharedError
+            ? `同步失败：${st.sharedError}`
+            : st.shared.dir ? `「${st.shared.name}」· ${st.shared.entries} 条 · 在「${st.shared.dir}」` : "你现在不在任何共享知识库中。",
+        },
+        {
           name: "上次同步",
           desc: st.lastError ? `失败：${st.lastError}` : when,
           action: () => {
@@ -78,7 +93,8 @@ export class MirrorSettingTab extends PluginSettingTab {
           name: "工作方式",
           desc: "收件箱模式只新增文件：从不删除文件，也从不覆盖不是它写入的文件。"
             + "文件在这里保存并校验之后，服务端会在一段宽限期后删除自己的那一份，"
-            + "所以这个库里的就是唯一的一份。在这里删除文件就是永久删除。",
+            + "所以这个库里的就是唯一的一份。在这里删除文件就是永久删除。"
+            + "共享知识库的文件夹例外：它是服务端的镜像，只删除和覆盖插件自己写入、且你没有改过的文件。",
         },
       ];
     }
@@ -160,11 +176,18 @@ export class MirrorSettingTab extends PluginSettingTab {
   getControlValue(key: string): unknown {
     // 配置码是一次性输入，不回显：它含令牌，留在输入框里等于把凭据摆在设置页上。
     if (key === "setupCode") return "";
+    if (key === SHARED_SYNC) return this.host.cfg.sharedSync;
     return (this.host.cfg as Record<Exclude<Key, "setupCode">, string>)[key as Exclude<Key, "setupCode">] ?? "";
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    // 这几个控件全是 text 类型，值一定是字符串；显式收窄而不是 String(unknown)——
+    if (key === SHARED_SYNC) {
+      this.host.cfg.sharedSync = value === true;
+      await this.host.saveAll();
+      void this.host.syncNow().then(() => this.update());
+      return;
+    }
+    // 其余控件全是 text 类型，值一定是字符串；显式收窄而不是 String(unknown)——
     // 后者对对象会静默变成 "[object Object]"，把垃圾写进配置。
     const v = typeof value === "string" ? value.trim() : "";
 

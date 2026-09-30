@@ -25,4 +25,14 @@ describe("statusText", () => {
     expect(statusText({ syncing: false, lastSyncAt: T - 3600_000, lastError: "连不上服务器" }))
       .toContain("同步失败");
   });
+
+  it("收件箱模式带上共享库的条数；共享库失败单独说，不影响收件箱那一半", () => {
+    const base = { syncing: false, lastSyncAt: T, lastError: "", mode: "inbox" as const };
+    expect(statusText({ ...base, shared: { active: true, entries: 42, error: "" } })).toBe("收件箱：已同步 10:30 · 共享库 42 条");
+    expect(statusText({ ...base, shared: { active: true, entries: 42, error: "连不上服务器" } }))
+      .toBe("收件箱：已同步 10:30 · 共享库同步失败（连不上服务器）");
+    expect(statusText({ ...base, shared: { active: false, entries: 0, error: "" } })).toBe("收件箱：已同步 10:30");
+    expect(statusText({ ...base, lastError: "认证失败", shared: { active: true, entries: 42, error: "" } }))
+      .toBe("收件箱：同步失败 · 认证失败");
+  });
 });

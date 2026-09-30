@@ -87,18 +87,19 @@ export async function webSha256(data: Uint8Array): Promise<string> {
   return hex(await crypto.subtle.digest("SHA-256", toArrayBuffer(data)));
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
+export function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function trimSlash(s: string): string {
+export function trimSlash(s: string): string {
   return s.replace(/\/+$/, "");
 }
 
 type Response = { status: number; arrayBuffer: ArrayBuffer };
 
-async function call(req: RequestUrlFn, url: string, method: string, token: string | null, body?: unknown): Promise<Response> {
-  const headers: Record<string, string> = {};
+export async function call(req: RequestUrlFn, url: string, method: string, token: string | null, body?: unknown,
+  extra: Record<string, string> = {}): Promise<Response> {
+  const headers: Record<string, string> = { ...extra };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   try {
@@ -111,14 +112,14 @@ async function call(req: RequestUrlFn, url: string, method: string, token: strin
   }
 }
 
-function ensureOk(res: Response, what: string): void {
+export function ensureOk(res: Response, what: string): void {
   if (res.status === 401) {
     throw new InboxError("auth", "本设备已不再绑定。请重新获取配置码，粘贴到设置里。");
   }
   if (res.status >= 400) throw new InboxError("server", `${what}失败（HTTP ${res.status}）`);
 }
 
-function parseJson(res: Response): unknown {
+export function parseJson(res: Response): unknown {
   try {
     return JSON.parse(new TextDecoder().decode(res.arrayBuffer)) as unknown;
   } catch {
@@ -163,7 +164,7 @@ export function parseItems(data: unknown): { items: InboxItem[]; more: boolean }
   return { items, more: data.more === true };
 }
 
-function dirname(path: string): string {
+export function dirname(path: string): string {
   const i = path.lastIndexOf("/");
   return i < 0 ? "" : path.slice(0, i);
 }

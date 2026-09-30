@@ -39,6 +39,8 @@ export type MirrorConfig = {
   /** inbox 模式：本设备的令牌（用配置码换来）。 */
   deviceToken: string;
   deviceId: string;
+  /** inbox 模式：同时镜像本人所在的共享库（见 shared.ts）。关掉 = 删掉没改过的共享副本。 */
+  sharedSync: boolean;
 };
 
 export const DEFAULT_CONFIG: MirrorConfig = {
@@ -55,6 +57,7 @@ export const DEFAULT_CONFIG: MirrorConfig = {
   endpoint: "",
   deviceToken: "",
   deviceId: "",
+  sharedSync: true,
 };
 
 export class ConfigError extends Error {
@@ -113,6 +116,7 @@ export function decodeConfig(text: string): MirrorConfig {
     endpoint: "",
     deviceToken: "",
     deviceId: "",
+    sharedSync: true,
   };
 }
 

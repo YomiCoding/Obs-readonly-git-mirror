@@ -1,8 +1,9 @@
 import { Notice, Plugin, requestUrl } from "obsidian";
 import { ConfigError, DEFAULT_CONFIG, MirrorConfig, decodeSetupCode, isConfigured } from "./config";
 import { makeHttp } from "./http";
-import { InboxError, InboxState, VaultIO, claimDevice, emptyInboxState, revokeDevice, syncInbox } from "./inbox";
+import { InboxError, InboxState, claimDevice, emptyInboxState, revokeDevice, syncInbox } from "./inbox";
 import { MirrorSettingTab } from "./settings-tab";
+import { MirrorIO, SharedState, SyncSharedResult, emptySharedState, syncShared } from "./shared";
 import { statusText } from "./status";
 import { TICK_MS, dueForScheduledSync } from "./schedule";
 import { Identity, MirrorFs, SyncError, reportDeletions, resolveTarget, retireMirror, syncOnce } from "./sync";
@@ -20,11 +21,17 @@ type State = {
   pendingSince: Record<string, number>;
   /** inbox 模式的本地账本与待补发的确认。 */
   inbox: InboxState;
+  /** 共享库镜像的账本；sharedError 单独记，不把收件箱也标成失败。 */
+  shared: SharedState;
+  sharedError: string;
 };
 
 export default class GitMirrorPlugin extends Plugin {
   cfg: MirrorConfig = { ...DEFAULT_CONFIG };
-  state: State = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState() };
+  state: State = {
+    lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState(),
+    shared: emptySharedState(), sharedError: "",
+  };
   private bar!: HTMLElement;
   private syncing = false;
   private syncStartedAt = 0;
@@ -33,12 +40,22 @@ export default class GitMirrorPlugin extends Plugin {
   async onload(): Promise<void> {
     const saved = ((await this.loadData()) ?? {}) as { cfg?: Partial<MirrorConfig>; state?: Partial<State> };
     this.cfg = { ...DEFAULT_CONFIG, ...(saved.cfg ?? {}) };
-    this.state = { lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState(), ...(saved.state ?? {}) };
+    this.state = {
+      lastSyncAt: 0, lastOid: "", lastError: "", pendingDeletes: [], pendingSince: {}, inbox: emptyInboxState(),
+      shared: emptySharedState(), sharedError: "", ...(saved.state ?? {}),
+    };
     if (!Array.isArray(this.state.pendingDeletes)) this.state.pendingDeletes = [];
     if (!this.state.pendingSince || typeof this.state.pendingSince !== "object") this.state.pendingSince = {};
     if (!this.state.inbox || typeof this.state.inbox.ledger !== "object" || !Array.isArray(this.state.inbox.pendingAcks)) {
       this.state.inbox = emptyInboxState();
     }
+    if (!this.state.shared || typeof this.state.shared.files !== "object" || this.state.shared.files === null) {
+      this.state.shared = emptySharedState();
+    }
+    if (typeof this.state.shared.pendingDeletes !== "object" || this.state.shared.pendingDeletes === null) {
+      this.state.shared.pendingDeletes = {};
+    }
+    if (typeof this.cfg.sharedSync !== "boolean") this.cfg.sharedSync = true;
 
     this.bar = this.addStatusBarItem();
     this.paint();
@@ -64,7 +81,11 @@ export default class GitMirrorPlugin extends Plugin {
   }
 
   private paint(): void {
-    this.bar.setText(statusText({ syncing: this.syncing, ...this.state, mode: this.cfg.mode }));
+    const sh = this.state.shared;
+    this.bar.setText(statusText({
+      syncing: this.syncing, ...this.state, mode: this.cfg.mode,
+      shared: { active: Boolean(sh.dir), entries: sh.entries, error: this.state.sharedError },
+    }));
   }
 
   /** Setup codes come from the settings field or an obsidian:// link. Errors are shown, never swallowed. */
@@ -116,17 +137,35 @@ export default class GitMirrorPlugin extends Plugin {
     } catch {
       // forget the token locally even when the server is unreachable; it can also be revoked from the server side
     }
-    this.cfg = { ...DEFAULT_CONFIG, targetDir: this.cfg.targetDir };
+    // 共享库的副本随绑定一起撤掉（没改过的删、改过的留）：解绑后它们再也不会更新，也不会跟着服务端删除。
+    await this.syncSharedRound(false);
+    this.cfg = { ...DEFAULT_CONFIG, targetDir: this.cfg.targetDir, sharedSync: this.cfg.sharedSync };
     this.state.inbox = emptyInboxState();
     await this.saveAll();
     this.paint();
     new Notice("本设备已解除绑定，库里已有的文件会保留。");
   }
 
-  /** The Obsidian vault adapter, shaped as what inbox mode needs. */
-  private vaultIO(): VaultIO {
+  /** The Obsidian vault adapter, shaped as what inbox mode and the shared mirror need. */
+  private vaultIO(): MirrorIO {
     const a = this.app.vault.adapter;
     return {
+      remove: (p) => a.remove(p),
+      list: (p) => a.list(p),
+      // 只删空文件夹。不能用 adapter.rmdir(p, false)：桌面端它是 fs.rm(p, {recursive: false})，对文件夹必然报错
+      // （本机 Obsidian 1.13 端到端撞到：退出共享库后留下一串空文件夹）。桌面端直接用 Node 的 fs.rmdir，非空就失败，
+      // 绝不会连带删掉别的东西；没有 Node fs（移动端）时先确认为空再交给 adapter。
+      rmdir: async (p) => {
+        const basePath = (a as unknown as { basePath?: string }).basePath;
+        const req = (window as unknown as { require?: (m: string) => { promises: { rmdir(path: string): Promise<void> } } }).require;
+        if (basePath && req) {
+          await req("fs").promises.rmdir(`${basePath}/${p}`);
+          return;
+        }
+        const l = await a.list(p);
+        if (l.files.length || l.folders.length) throw new Error("not empty");
+        await a.rmdir(p, true);
+      },
       exists: (p) => a.exists(p),
       read: async (p) => new Uint8Array(await a.readBinary(p)),
       write: (p, d) => a.writeBinary(p, d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) as ArrayBuffer),
@@ -156,6 +195,48 @@ export default class GitMirrorPlugin extends Plugin {
     });
     if (r.failed) new Notice(`收件箱：${r.failed} 个条目没能保存，稍后会重试。`, 8000);
     this.state.lastOid = "";
+  }
+
+  /**
+   * 共享库镜像，跟在收件箱之后。它自己的失败只记在 sharedError（状态栏单独显示），不影响收件箱。
+   * enabled=false：不问服务端，直接撤掉没改过的副本（关掉开关、解除绑定时）。
+   */
+  async syncSharedRound(enabled = this.cfg.sharedSync): Promise<void> {
+    let r: SyncSharedResult;
+    try {
+      r = await syncShared({
+        req: requestUrl, endpoint: this.cfg.endpoint, token: this.cfg.deviceToken, io: this.vaultIO(),
+        base: this.cfg.targetDir.trim(), state: this.state.shared, enabled,
+        persist: async (s) => {
+          this.state.shared = s;
+          await this.saveAll();
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof InboxError ? e.message : String(e instanceof Error ? e.message : e);
+      if (!this.state.sharedError) new Notice(`共享库同步失败：${msg}`, 10_000);
+      this.state.sharedError = msg;
+      return;
+    }
+    this.state.sharedError = "";
+    if (r.retired && (r.retired.removed || r.retired.kept)) {
+      const kept = r.retired.kept ? `（保留了 ${r.retired.kept} 个你改过的文件）` : "";
+      new Notice(enabled
+        ? `你已不在共享库「${r.retired.name}」，已移除它的同步副本${kept}。`
+        : `已停止同步共享库「${r.retired.name}」，已移除它的同步副本${kept}。`, 10_000);
+    }
+    if (r.kept) new Notice(`共享库里有 ${r.kept} 个文件已被删除；你改过这些文件，已保留为你自己的笔记。`, 10_000);
+    // 在 Obsidian 里删共享页面的去向必须让人看见：接受了会从所有成员那里删掉，没接受的已经放回来了。
+    if (r.accepted) new Notice(`已申请删除 ${r.accepted} 条共享内容，其他成员那里也会一起删除。`, 8000);
+    if (r.rejected) new Notice(`只有贡献者或管理员能删除，已恢复 ${r.rejected} 篇共享页面。`, 10_000);
+    if (r.expired) {
+      new Notice(`已放回 ${r.expired} 篇共享页面：服务端接受了删除，但一直没有删掉。如果仍要删除，请再删一次。`, 10_000);
+    }
+    if (r.massRestored) {
+      new Notice(`共享库的 ${r.massRestored} 篇页面被一次删掉了，看起来是误删（例如删除或移动了整个文件夹），已全部恢复。`
+        + "要删除某一条，请逐篇删除。", 12_000);
+    }
+    if (r.failed) new Notice(`共享库：${r.failed} 条没能保存，稍后会重试。`, 8000);
   }
 
   /** vault 根目录的绝对路径。移动端的 adapter 没有 basePath，因此暂不支持。 */
@@ -209,6 +290,7 @@ export default class GitMirrorPlugin extends Plugin {
         await this.syncInboxRound();
         this.state.lastSyncAt = Date.now();
         this.state.lastError = "";
+        await this.syncSharedRound();
         return;
       }
       const fs = this.nodeFs();
