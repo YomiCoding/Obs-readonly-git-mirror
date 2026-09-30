@@ -44,8 +44,8 @@ export default class GitMirrorPlugin extends Plugin {
     this.paint();
 
     this.addSettingTab(new MirrorSettingTab(this.app, this));
-    this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.syncNow() });
-    this.addCommand({ id: "unlink-device", name: "Unlink this device (inbox mode)", callback: () => void this.unlinkDevice() });
+    this.addCommand({ id: "sync-now", name: "立即同步", callback: () => void this.syncNow() });
+    this.addCommand({ id: "unlink-device", name: "解除本设备绑定（收件箱模式）", callback: () => void this.unlinkDevice() });
 
     // obsidian://readonly-git-mirror?config=<base64url>
     // 管理员发一条链接，用户点一下就配好，不用手打地址和令牌。
@@ -74,7 +74,7 @@ export default class GitMirrorPlugin extends Plugin {
       if (code.kind === "git") {
         this.cfg = code.cfg;
         await this.saveAll();
-        new Notice("Setup code applied");
+        new Notice("配置码已生效");
         void this.syncNow();
         return true;
       }
@@ -86,7 +86,7 @@ export default class GitMirrorPlugin extends Plugin {
       this.state.lastError = "";
       await this.saveAll();
       if (wasMirror) await this.retireOldMirror();
-      new Notice("This device is linked. New items arrive on the next sync.");
+      new Notice("本设备已绑定，新内容会在下次同步时收到。");
       void this.syncNow();
       return true;
     } catch (e) {
@@ -102,10 +102,10 @@ export default class GitMirrorPlugin extends Plugin {
       const dir = name ? `${this.vaultPath()}/${name}` : this.vaultPath();
       const r = await retireMirror(this.nodeFs(), dir);
       if (r.removed || r.kept) {
-        new Notice(`Removed ${r.removed} unchanged file(s) from the previous mirror; kept ${r.kept} file(s) you had edited.`, 10_000);
+        new Notice(`已删除之前镜像里 ${r.removed} 个没改动过的文件；保留了 ${r.kept} 个你改过的文件。`, 10_000);
       }
     } catch (e) {
-      new Notice(`Could not clean up the previous mirror: ${e instanceof Error ? e.message : String(e)}`, 10_000);
+      new Notice(`没能清理之前的镜像：${e instanceof Error ? e.message : String(e)}`, 10_000);
     }
   }
 
@@ -120,7 +120,7 @@ export default class GitMirrorPlugin extends Plugin {
     this.state.inbox = emptyInboxState();
     await this.saveAll();
     this.paint();
-    new Notice("This device is unlinked. Files already in the vault stay.");
+    new Notice("本设备已解除绑定，库里已有的文件会保留。");
   }
 
   /** The Obsidian vault adapter, shaped as what inbox mode needs. */
@@ -144,7 +144,7 @@ export default class GitMirrorPlugin extends Plugin {
   private async syncInboxRound(): Promise<void> {
     const name = this.cfg.targetDir.trim();
     if (name.includes("/") || name.includes(String.fromCharCode(92)) || name === "." || name === "..") {
-      throw new SyncError("repo", "Target folder must be a single folder name, without slashes.");
+      throw new SyncError("repo", "目标文件夹只能是一个文件夹名，不能带斜杠。");
     }
     const r = await syncInbox({
       req: requestUrl, endpoint: this.cfg.endpoint, token: this.cfg.deviceToken, io: this.vaultIO(), root: name,
@@ -154,14 +154,14 @@ export default class GitMirrorPlugin extends Plugin {
         await this.saveAll();
       },
     });
-    if (r.failed) new Notice(`Inbox: ${r.failed} item(s) could not be saved and will be retried.`, 8000);
+    if (r.failed) new Notice(`收件箱：${r.failed} 个条目没能保存，稍后会重试。`, 8000);
     this.state.lastOid = "";
   }
 
   /** vault 根目录的绝对路径。移动端的 adapter 没有 basePath，因此暂不支持。 */
   private vaultPath(): string {
     const p = (this.app.vault.adapter as unknown as { basePath?: string }).basePath;
-    if (!p) throw new SyncError("repo", "This platform is not supported yet (desktop only).");
+    if (!p) throw new SyncError("repo", "暂不支持这个平台（仅支持桌面端）。");
     return p;
   }
 
@@ -171,7 +171,7 @@ export default class GitMirrorPlugin extends Plugin {
    */
   private nodeFs(): MirrorFs {
     const req = (window as unknown as { require?: (m: string) => MirrorFs }).require;
-    if (!req) throw new SyncError("repo", "This platform is not supported yet (desktop only).");
+    if (!req) throw new SyncError("repo", "暂不支持这个平台（仅支持桌面端）。");
     return req("fs");
   }
 
@@ -197,7 +197,7 @@ export default class GitMirrorPlugin extends Plugin {
     // 但挂得太久的那一轮不能永远占着锁：视作已死，放行。
     if (this.syncing && Date.now() - this.syncStartedAt > STUCK_AFTER_MS) {
       this.syncing = false;
-      new Notice("Mirror: previous sync hung and was abandoned; syncing again.", 8000);
+      new Notice("上一轮同步卡住了，已放弃，正在重新同步。", 8000);
     }
     if (this.syncing || !isConfigured(this.cfg)) return;
     this.syncing = true;
@@ -227,13 +227,13 @@ export default class GitMirrorPlugin extends Plugin {
       this.state.pendingDeletes = r.pending;
       this.state.pendingSince = r.pendingSince;
       if (r.expired.length) {
-        new Notice(`Restored ${r.expired.length} file(s): the server accepted the deletion but kept the file. Delete again if you still want it gone.`, 10_000);
+        new Notice(`已放回 ${r.expired.length} 个文件：服务端接受了删除，但一直没有删掉文件。如果仍要删除，请再删一次。`, 10_000);
       }
       // 删除的去向必须让人看见：被接受的会从服务端删掉，没被接受的已经被写回来了。
-      if (r.accepted.length) new Notice(`Reported ${r.accepted.length} deleted file(s) to the server.`);
+      if (r.accepted.length) new Notice(`已向服务端上报 ${r.accepted.length} 个删除的文件。`);
       if (r.rejected.length) {
-        const why = r.reportError ? ` (${r.reportError})` : cfg.deleteReportUrl ? " (not accepted by the server)" : " (this mirror is read-only)";
-        new Notice(`Restored ${r.rejected.length} file(s) you deleted${why}.`, 10_000);
+        const why = r.reportError ? `（${r.reportError}）` : cfg.deleteReportUrl ? "（服务端没有接受）" : "（这个镜像是只读的）";
+        new Notice(`已恢复你删除的 ${r.rejected.length} 个文件${why}。`, 10_000);
       }
       this.state.lastOid = r.oid;
       this.state.lastSyncAt = Date.now();
@@ -242,7 +242,7 @@ export default class GitMirrorPlugin extends Plugin {
       const msg = e instanceof SyncError || e instanceof InboxError ? e.message : String(e);
       // 只在从「好」变「坏」时弹一次：每分钟弹一次会把用户逼疯，
       // 而状态栏一直挂着失败，信息不会丢。
-      if (!this.state.lastError) new Notice(`Mirror sync failed: ${msg}`, 10_000);
+      if (!this.state.lastError) new Notice(`同步失败：${msg}`, 10_000);
       this.state.lastError = msg;
     } finally {
       this.syncing = false;

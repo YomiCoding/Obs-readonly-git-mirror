@@ -107,33 +107,33 @@ async function call(req: RequestUrlFn, url: string, method: string, token: strin
       body: body === undefined ? undefined : toArrayBuffer(new TextEncoder().encode(JSON.stringify(body))),
     });
   } catch {
-    throw new InboxError("network", "Cannot reach the server. Check your network connection.");
+    throw new InboxError("network", "连不上服务器，请检查网络连接。");
   }
 }
 
 function ensureOk(res: Response, what: string): void {
   if (res.status === 401) {
-    throw new InboxError("auth", "This device is no longer linked. Get a new setup code and paste it in the settings.");
+    throw new InboxError("auth", "本设备已不再绑定。请重新获取配置码，粘贴到设置里。");
   }
-  if (res.status >= 400) throw new InboxError("server", `${what} failed (HTTP ${res.status})`);
+  if (res.status >= 400) throw new InboxError("server", `${what}失败（HTTP ${res.status}）`);
 }
 
 function parseJson(res: Response): unknown {
   try {
     return JSON.parse(new TextDecoder().decode(res.arrayBuffer)) as unknown;
   } catch {
-    throw new InboxError("server", `Unexpected response from the server (HTTP ${res.status})`);
+    throw new InboxError("server", `服务器返回了无法识别的响应（HTTP ${res.status}）`);
   }
 }
 
 export async function claimDevice(req: RequestUrlFn, endpoint: string, code: string, label: string): Promise<{ token: string; deviceId: string }> {
   const res = await call(req, `${trimSlash(endpoint)}/claim`, "POST", null, { code, label });
-  if (res.status === 410) throw new InboxError("auth", "This setup code is invalid, expired or already used. Get a new one.");
-  if (res.status === 429) throw new InboxError("server", "Too many attempts. Try again in a few minutes.");
-  ensureOk(res, "Linking this device");
+  if (res.status === 410) throw new InboxError("auth", "配置码无效、已过期或已被使用，请重新获取。");
+  if (res.status === 429) throw new InboxError("server", "尝试次数过多，请几分钟后再试。");
+  ensureOk(res, "绑定本设备");
   const data = parseJson(res);
   if (!isObject(data) || typeof data.token !== "string" || !data.token) {
-    throw new InboxError("server", "Unexpected response from the server");
+    throw new InboxError("server", "服务器返回了无法识别的响应");
   }
   const id = data.device_id;
   return { token: data.token, deviceId: typeof id === "number" || typeof id === "string" ? String(id) : "" };
@@ -141,20 +141,20 @@ export async function claimDevice(req: RequestUrlFn, endpoint: string, code: str
 
 export async function revokeDevice(req: RequestUrlFn, endpoint: string, token: string): Promise<void> {
   const res = await call(req, `${trimSlash(endpoint)}/device/revoke`, "POST", token);
-  if (res.status !== 401) ensureOk(res, "Unlinking this device");
+  if (res.status !== 401) ensureOk(res, "解除本设备绑定");
 }
 
 export function parseItems(data: unknown): { items: InboxItem[]; more: boolean } {
-  if (!isObject(data) || !Array.isArray(data.items)) throw new InboxError("server", "Unexpected item list from the server");
+  if (!isObject(data) || !Array.isArray(data.items)) throw new InboxError("server", "服务器返回的条目列表无法识别");
   const items: InboxItem[] = [];
   for (const raw of data.items as unknown[]) {
     if (!isObject(raw) || typeof raw.id !== "string" || !Array.isArray(raw.files)) {
-      throw new InboxError("server", "Unexpected item list from the server");
+      throw new InboxError("server", "服务器返回的条目列表无法识别");
     }
     const files: InboxFile[] = [];
     for (const f of raw.files as unknown[]) {
       if (!isObject(f) || typeof f.seq !== "number" || typeof f.path !== "string" || typeof f.size !== "number" || typeof f.sha256 !== "string") {
-        throw new InboxError("server", "Unexpected item list from the server");
+        throw new InboxError("server", "服务器返回的条目列表无法识别");
       }
       files.push({ seq: f.seq, path: f.path, size: f.size, sha256: f.sha256 });
     }
@@ -200,7 +200,7 @@ export async function syncInbox(d: SyncInboxDeps): Promise<SyncInboxResult> {
 
   const ack = async (ids: string[], failed: { id: string; code: string }[]): Promise<number> => {
     const res = await call(d.req, `${base}/ack`, "POST", d.token, { ids, failed });
-    ensureOk(res, "Confirming delivery");
+    ensureOk(res, "确认收到");
     const data = parseJson(res);
     return isObject(data) && Array.isArray(data.acked) ? data.acked.length : 0;
   };
@@ -233,7 +233,7 @@ export async function syncInbox(d: SyncInboxDeps): Promise<SyncInboxResult> {
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const res = await call(d.req, `${base}/items?limit=${PAGE_LIMIT}`, "GET", d.token);
-    ensureOk(res, "Listing new items");
+    ensureOk(res, "获取新条目");
     const { items, more } = parseItems(parseJson(res));
     const ids: string[] = [];
     const failed: { id: string; code: string }[] = [];
@@ -247,7 +247,7 @@ export async function syncInbox(d: SyncInboxDeps): Promise<SyncInboxResult> {
         const ordered = [...item.files].sort((a, b) => Number(a.seq === 0) - Number(b.seq === 0) || a.seq - b.seq);
         for (const f of ordered) {
           const dl = await call(d.req, `${base}/items/${encodeURIComponent(item.id)}/files/${f.seq}`, "GET", d.token);
-          ensureOk(dl, "Download");
+          ensureOk(dl, "下载");
           const data = new Uint8Array(dl.arrayBuffer);
           if ((await sha(data)) !== f.sha256) throw new InboxError("server", "checksum_mismatch");
           if (await place(item, f, data)) out.written++;
@@ -259,6 +259,7 @@ export async function syncInbox(d: SyncInboxDeps): Promise<SyncInboxResult> {
           await d.persist(state);
           throw e;
         }
+        // code 是发给服务端的协议错误码（unsafe_path / name_conflict / verify_failed / checksum_mismatch），不是界面文案，不要翻译。
         failed.push({ id: item.id, code: e instanceof InboxError ? e.message : "write_failed" });
         out.failed++;
       }

@@ -28,8 +28,8 @@ describe("isConfigured", () => {
 
 describe("statusText", () => {
   it("names the mode", () => {
-    expect(statusText({ syncing: false, lastSyncAt: 0, lastError: "", mode: "inbox" })).toBe("Inbox: not synced yet");
-    expect(statusText({ syncing: false, lastSyncAt: 0, lastError: "" })).toBe("Mirror: not synced yet");
+    expect(statusText({ syncing: false, lastSyncAt: 0, lastError: "", mode: "inbox" })).toBe("收件箱：尚未同步");
+    expect(statusText({ syncing: false, lastSyncAt: 0, lastError: "" })).toBe("镜像：尚未同步");
   });
 });
 

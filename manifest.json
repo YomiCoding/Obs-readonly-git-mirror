@@ -1,9 +1,9 @@
 {
   "id": "readonly-git-mirror",
-  "name": "Read-only Git Mirror",
-  "version": "0.7.1",
+  "name": "Data Transmission",
+  "version": "0.7.2",
   "minAppVersion": "1.13.0",
-  "description": "Mirror a Git repository into your vault read-only, or receive files from a personal inbox server. One-way: never commits, never pushes.",
+  "description": "用一次性配置码绑定收件服务器后，每 10 秒把发给你的内容（整理好的笔记页，连同图片、PDF 等原文件）自动收进库里。只新增文件，从不删除或覆盖你自己的笔记；收到并校验后，服务器会在一段时间后删掉它那一份。",
   "author": "YomiCoding",
   "isDesktopOnly": true,
   "authorUrl": "https://github.com/YomiCoding"

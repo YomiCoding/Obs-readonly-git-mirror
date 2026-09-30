@@ -1,123 +1,87 @@
-# Read-only Git Mirror
+# Data Transmission
 
-Bring files into your Obsidian vault — one way. Two modes:
+把文件单向送进你的 Obsidian 库。有两种模式：
 
-- **Mirror mode**: mirror a Git repository, read-only. Useful when a team publishes a
-  knowledge base as a Git repository and readers should always see the latest version.
-- **Inbox mode**: receive items addressed to you from a personal inbox server. Items are
-  only ever added to your vault; the server may delete its copy once you have them.
+- **收件箱模式**：从个人收件服务器接收发给你的条目。条目只会被新增到你的库里；你收到之后，服务端可以删除它那一份。
+- **镜像模式**：只读镜像一个 Git 仓库。适合团队把知识库发布成 Git 仓库、读者始终看到最新版本的场景。
 
-## Inbox mode
+## 收件箱模式
 
-### Linking a device
+### 绑定设备
 
-Your server hands you a one-time **setup code** (it expires quickly and works once). Paste it
-into Settings → Read-only Git Mirror → **Setup code**. The plugin exchanges it for a device token
-and stores only the server address, the token and a device id — not the code. Link each
-computer separately; every device has its own token and can be unlinked on its own
-(command palette: **Unlink this device**, or from the server side).
+服务端会给你一个一次性的**配置码**（很快过期，只能用一次）。把它粘贴到 设置 → Data Transmission → **配置码**。插件用它换取一个设备令牌，只保存服务器地址、令牌和设备 id，不保存配置码。每台电脑单独绑定；每台设备有自己的令牌，可以单独解除绑定（命令面板：**解除本设备绑定**，或者在服务端操作）。
 
-If the vault was previously used in mirror mode, switching removes the mirrored files you never
-edited and the local `.git` folder; files you edited, and your own notes, stay. A notice says how
-many files were removed and kept.
+如果这个库以前用过镜像模式，切换过来时会删掉你从没改过的镜像文件和本地 `.git` 文件夹；你改过的文件和你自己的笔记都会保留。弹出的提示会告诉你删了几个、留了几个。
 
-### What a sync does
+### 一次同步做了什么
 
-On startup and every 10 seconds:
+启动时执行一次，之后每 10 秒一次：
 
-1. Resends confirmations that failed last time.
-2. Lists the items waiting for this device.
-3. Downloads each file to a temporary `.part` file, renames it into place, reads it back and
-   checks its SHA-256. Attachments are written before the page that links to them.
-4. Records the item in a local ledger (saved in `data.json`) and only then confirms receipt.
+1. 补发上次没发出去的确认。
+2. 列出等待本设备接收的条目。
+3. 把每个文件下载到临时的 `.part` 文件，改名放到位，再读回来校验 SHA-256。页面引用的其他文件先写入，页面最后写入。
+4. 先把条目记进本地账本（保存在 `data.json`），然后才确认收到。
 
-Guarantees:
+保证：
 
-- **Never deletes a file and never overwrites a file it did not write.** If a different file
-  already sits at the target path, the item is written next to it with a `-<id>` suffix.
-- **Deleted stays deleted.** An item already in the ledger is confirmed again without rewriting,
-  so a file you removed does not come back.
-- **No confirmation without a verified write.** A failed download, a hash mismatch or a failed
-  read-back leaves the item unconfirmed; it is retried on the next sync.
-- Paths come from the server and are validated: no `..`, no absolute paths, no backslashes, no
-  leading dots, no reserved or control characters.
+- **从不删除文件，也从不覆盖不是它写入的文件。** 目标路径上已经有一个不同的文件时，条目会写在它旁边，文件名带 `-<id>` 后缀。
+- **删了就是删了。** 已经记在账本里的条目只会再确认一次、不会重写，所以你删掉的文件不会回来。
+- **没有校验通过的写入，就不确认。** 下载失败、哈希不一致或读回失败时，条目保持未确认，下次同步重试。
+- 路径由服务端下发并经过校验：不允许 `..`、绝对路径、反斜杠、以点开头的名字、保留字符或控制字符。
 
-A `401` answer means the token was revoked; the status bar says the device is unlinked and syncing
-stops. Files already in the vault stay.
+服务端回 `401` 表示令牌已被吊销：状态栏会提示本设备已解除绑定，同步停止。库里已有的文件保留。
 
-### Protocol
+### 协议
 
-Every request except `claim` carries `Authorization: Bearer <device token>`; responses must not be cached.
+除 `claim` 外，所有请求都带 `Authorization: Bearer <设备令牌>`；响应不得被缓存。
 
 ```
 POST {endpoint}/claim                  {code, label}  -> {token, device_id}
 GET  {endpoint}/items?limit=50                        -> {items: [{id, created_at, files: [{seq, path, size, sha256}]}], more}
-GET  {endpoint}/items/{id}/files/{seq}                -> raw bytes
+GET  {endpoint}/items/{id}/files/{seq}                -> 原始字节
 POST {endpoint}/ack                    {ids, failed}  -> {acked}
-GET  {endpoint}/device                                -> device status
+GET  {endpoint}/device                                -> 设备状态
 POST {endpoint}/device/revoke                         -> 204
 ```
 
-The setup code is base64url of `{"v": 2, "endpoint": "https://…", "claim": "…"}`.
+配置码是 `{"v": 2, "endpoint": "https://…", "claim": "…"}` 的 base64url 编码。
 
-**The setup code and the device token are credentials.** Anyone holding them can receive your items.
+**配置码和设备令牌都是凭据。** 拿到它们的人就能收取你的条目。
 
-## Mirror mode
+## 镜像模式
 
-### What it does
+### 它做什么
 
-- Pulls a branch of a Git repository into the vault folder, on startup and every 60 seconds.
-- **Never commits, never pushes.** A read-only token is enough.
-- **Never touches files the repository does not track.** Keep your own notes in a folder
-  that does not exist in the repository and they are safe.
-- Files the repository *does* track are overwritten on every sync — the remote is the
-  source of truth for those. Files removed from the remote are removed locally too, so
-  the vault does not accumulate stale copies.
-- Shows the sync state in the status bar, and says why when it fails. Silent staleness is
-  the worst failure mode for a tool like this, so failures are always visible.
+- 启动时和之后每 60 秒，把 Git 仓库的一个分支拉进库里的文件夹。
+- **从不提交，也从不推送。** 只读令牌就够用。
+- **从不碰仓库没有跟踪的文件。** 把自己的笔记放在仓库里不存在的文件夹里，就是安全的。
+- 仓库*跟踪*的文件每次同步都会被覆盖：对这些文件来说，远端才是准的。远端删掉的文件，本地也会删掉，库里不会越积越多过时的副本。
+- 在状态栏显示同步状态，失败时说明原因。这类工具最糟糕的失败方式是悄无声息地变旧，所以失败一定看得见。
 
-### Deleting mirrored files
+### 删除镜像文件
 
-By default the mirror is strictly read-only: a tracked file you delete comes back on the
-next sync. If the publisher runs an endpoint for it, set **Deletion report URL** (and its
-token): the plugin then reports what you deleted (`POST` JSON `{paths, reporter, user, host}`,
-`Authorization: Bearer <token>`), and files the server answers with in `accepted` stay
-deleted — the plugin keeps them suppressed until the remote repository drops them too. Files
-the server does not accept are restored, and a notice says so. A report that gets no answer
-within 30 seconds counts as failed, and a sync that hangs for more than five minutes is abandoned
-so the next one can run. `user` and `host` are your OS
-user name and machine name; **Your name** is an optional label for the audit trail.
+默认情况下镜像严格只读：你删掉一个被跟踪的文件，下次同步它就回来。如果发布方提供了上报接口，可以填写**删除上报地址**（以及它的令牌）：插件会上报你删除了哪些文件（`POST` JSON `{paths, reporter, user, host}`，`Authorization: Bearer <令牌>`），服务端在 `accepted` 里答复的文件保持删除——插件会一直压住它们，直到远端仓库也删掉它们。服务端没有接受的文件会被放回来，并弹出提示说明。上报 30 秒内没有回应算作失败；一轮同步卡住超过五分钟会被放弃，好让下一轮照常运行。`user` 和 `host` 是你的操作系统登录名和机器名；**你的名字**是写进审计记录的可选标签。
 
-## Network use
+## 网络访问
 
-In mirror mode this plugin talks to the Git repository URL you configure and, only if you set one, the
-deletion report URL. In inbox mode it talks only to the inbox server named in your setup code. Nothing else. There is **no telemetry, no analytics**, and no update mechanism of its own —
-updates come through Obsidian.
+镜像模式下，插件只访问你配置的 Git 仓库地址，以及（仅当你填写了的话）删除上报地址。收件箱模式下，它只访问配置码里写明的收件服务器。除此之外不访问任何地方。**没有遥测、没有统计**，也没有自己的更新机制——更新通过 Obsidian 进行。
 
-Credentials you enter are stored in this plugin's `data.json` inside your vault, in plain
-text — the same way a Git remote URL with an embedded token would be. **Use a read-only
-token.**
+你填写的凭据以明文保存在库里这个插件的 `data.json` 中——和把令牌写进 Git 远端地址是一样的。**请使用只读令牌。**
 
-### Setup
+### 配置
 
-1. Create a new, empty vault dedicated to the mirror (recommended). Obsidian's vault
-   switcher then lets you move between it and your own vaults, and nothing is ever written
-   into your own notes. The welcome note a new vault starts with is fine to leave in place.
-   If you would rather keep the mirror inside an existing vault, set a **target folder** in
-   the settings; the plugin refuses to mirror into the root of a vault that already holds
-   other files.
-2. Install and enable the plugin in that vault.
-3. Open Settings → Read-only Git Mirror.
-4. Either paste the one-line **setup code** your administrator gave you, or fill in the
-   repository URL, username and token by hand.
+1. 新建一个空库，专门用来放镜像（推荐）。用 Obsidian 的库切换器就能在它和你自己的库之间切换，你自己的笔记里什么都不会被写入。新建库时自带的欢迎笔记可以留着。如果你想把镜像放在已有的库里，请在设置里填一个**目标文件夹**；库的根目录下已经有别的文件时，插件会拒绝镜像到根目录。
+2. 在这个库里安装并启用插件。
+3. 打开 设置 → Data Transmission。
+4. 粘贴管理员给你的一行**配置码**，或者手动填写仓库地址、用户名和令牌。
 
-Administrators can also hand out a link that configures everything in one click:
+管理员也可以发一个链接，点一下就配置好：
 
 ```
-obsidian://readonly-git-mirror?config=<base64url of the setup JSON>
+obsidian://readonly-git-mirror?config=<配置 JSON 的 base64url>
 ```
 
-The setup JSON looks like this:
+配置 JSON 的样子：
 
 ```json
 {
@@ -133,16 +97,13 @@ The setup JSON looks like this:
 }
 ```
 
-`targetDir` empty means the vault root (a dedicated vault); a folder name puts the mirror in
-that subfolder of whichever vault the plugin runs in.
+`targetDir` 留空表示库的根目录（专用库）；填一个文件夹名，镜像就放在插件所在库的这个子文件夹里。
 
-**That link contains the token. Treat it as a credential** — anyone who gets it can read
-the repository.
+**这个链接里含有令牌，请把它当作凭据对待**——拿到它的人就能读取这个仓库。
 
-### Hiding parts of the repository
+### 隐藏仓库的一部分
 
-If the repository contains files meant for tooling rather than readers, it can ship a
-sparse list (default file name `.mirror-sparse`) in Git non-cone format:
+如果仓库里有给工具用、不给读者看的文件，仓库可以附带一份稀疏列表（默认文件名 `.mirror-sparse`），采用 Git 的 non-cone 格式：
 
 ```
 /*
@@ -150,33 +111,29 @@ sparse list (default file name `.mirror-sparse`) in Git non-cone format:
 !/build/
 ```
 
-Top-level paths listed with `!` are not written to disk. The file name is configurable
-via `sparseFile`, and `hidePaths` supplies a fallback list for repositories that do not
-ship one. Adding a path to the list later removes it from disk on the next sync.
+用 `!` 列出的顶层路径不会写到磁盘上。文件名可以通过 `sparseFile` 配置；仓库没有附带列表时，`hidePaths` 提供一份备用列表。之后往列表里加的路径，会在下次同步时从磁盘上删掉。
 
-## What it is not
+## 它不是什么
 
-- Not a two-way sync. Local edits to tracked files are discarded, by design.
-- Not a backup tool. It never writes to the remote.
+- 不是双向同步。对被跟踪文件的本地修改会被丢弃，这是有意的设计。
+- 不是备份工具。它从不写远端。
 
-## Limitations
+## 限制
 
-- **Desktop only.** The plugin needs Node's file system; mobile is not supported.
-- **Requires Obsidian 1.13 or newer** (it uses the declarative settings API, so its settings
-  show up in Obsidian's settings search).
-- Shallow clone (`depth: 1`); history is not available locally.
-- Large repositories are slow and memory-hungry, because the Git implementation is pure
-  JavaScript ([isomorphic-git](https://github.com/isomorphic-git/isomorphic-git)).
-- HTTP(S) remotes only. SSH is not supported.
+- **仅支持桌面端。** 插件需要 Node 的文件系统，不支持移动端。
+- **需要 Obsidian 1.13 或更新版本**（使用了声明式设置 API，所以它的设置项能出现在 Obsidian 的设置搜索里）。
+- 浅克隆（`depth: 1`），本地没有历史记录。
+- 大仓库会比较慢、占内存，因为 Git 实现是纯 JavaScript（[isomorphic-git](https://github.com/isomorphic-git/isomorphic-git)）。
+- 只支持 HTTP(S) 远端，不支持 SSH。
 
-## Development
+## 开发
 
 ```bash
 npm install
-npm test        # unit + integration tests
-npm run build   # produces dist/main.js and dist/manifest.json
+npm test        # 单元测试与集成测试
+npm run build   # 生成 dist/main.js 和 dist/manifest.json
 ```
 
-## License
+## 许可
 
 MIT

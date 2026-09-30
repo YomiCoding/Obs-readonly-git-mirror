@@ -143,7 +143,7 @@ describe("reportDeletions timeout", () => {
     const err: unknown = await reportDeletions(never, cfg, ["docs/a.md"], IDENTITY, 20).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SyncError);
     expect((err as SyncError).kind).toBe("network");
-    expect(String(err)).toContain("timed out");
+    expect(String(err)).toContain("超时");
   });
 
   it("withTimeout 正常返回时不影响结果", async () => {

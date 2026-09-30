@@ -241,7 +241,7 @@ export const REPORT_TIMEOUT_MS = 30_000;
 
 export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new SyncError("network", `${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    const t = setTimeout(() => reject(new SyncError("network", `${what}超时（${Math.round(ms / 1000)} 秒）`)), ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, (e: unknown) => { clearTimeout(t); reject(e instanceof Error ? e : new Error(String(e))); });
   });
 }
@@ -259,20 +259,20 @@ export async function reportDeletions(
       headers: { Authorization: `Bearer ${cfg.deleteReportToken}`, "Content-Type": "application/json" },
       body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
       throw: false,
-    }), timeoutMs, "deletion report");
+    }), timeoutMs, "删除上报");
   } catch (e) {
     if (e instanceof SyncError) throw e;          // 超时已经分好类了
     throw classify(e, cfg.deleteReportToken);
   }
   if (res.status < 200 || res.status >= 300) {
     throw new SyncError(res.status === 401 || res.status === 403 ? "auth" : "repo",
-      `deletion report refused (HTTP ${res.status})`);
+      `删除上报被拒绝（HTTP ${res.status}）`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(res.arrayBuffer));
   } catch {
-    throw new SyncError("repo", "deletion report: server returned no JSON");
+    throw new SyncError("repo", "删除上报：服务端没有返回 JSON");
   }
   const accepted = (parsed as { accepted?: unknown }).accepted;
   return Array.isArray(accepted) ? accepted.filter((x): x is string => typeof x === "string") : [];
@@ -366,7 +366,7 @@ export async function resolveTarget(a: {
     // 只允许一层普通名字：带斜杠或上跳就能写到库外面去，那是另一回事，不该悄悄支持。
     if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
       throw new SyncError("repo",
-        "Target folder must be a single folder name, without slashes.");
+        "目标文件夹只能是一个文件夹名，不能带斜杠。");
     }
     const dir = `${a.vaultPath}/${name}`;
     await a.fs.promises.mkdir(dir).catch(() => undefined);   // 已存在就算了
@@ -384,9 +384,9 @@ export async function resolveTarget(a: {
       // 光说「已有别的文件」他们会去删自己刚删过的文件夹，删来删去还是这条错。
       const seen = entries.slice(0, 3).join(", ") + (entries.length > 3 ? ", …" : "");
       throw new SyncError("repo",
-        `This vault already contains other files (${seen}), so the mirror will not be written into its root. `
-        + "Create a new, empty vault dedicated to the mirror and set the plugin up there (recommended), "
-        + "or set a target subfolder in the settings so the mirror does not mix with your own notes.");
+        `这个库里已经有别的文件（${seen}），镜像不会写进库的根目录。`
+        + "建议新建一个空库专门放镜像，在那里配置插件；"
+        + "或者在设置里填一个目标子文件夹，让镜像不和你自己的笔记混在一起。");
     }
   }
   return a.vaultPath;

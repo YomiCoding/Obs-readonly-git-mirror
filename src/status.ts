@@ -4,7 +4,7 @@ function hhmm(t: number): string {
 }
 
 /**
- * 状态栏文案。失败必须显式说 failed —— 静默是这类同步工具最坏的失败模式：
+ * 状态栏文案。失败必须显式说「同步失败」 —— 静默是这类同步工具最坏的失败模式：
  * 用户只会觉得「怎么好久没新内容」。
  *
  * 失败优先于「上次成功时刻」：上次成功过不代表现在是好的。令牌昨天过期、状态栏
@@ -13,9 +13,9 @@ function hhmm(t: number): string {
 export function statusText(s: {
   syncing: boolean; lastSyncAt: number; lastError: string; mode?: "git" | "inbox";
 }): string {
-  const label = s.mode === "inbox" ? "Inbox" : "Mirror";
-  if (s.syncing) return `${label}: syncing…`;
-  if (s.lastError) return `${label}: failed · ${s.lastError}`;
-  if (!s.lastSyncAt) return `${label}: not synced yet`;
-  return `${label}: synced ${hhmm(s.lastSyncAt)}`;
+  const label = s.mode === "inbox" ? "收件箱" : "镜像";
+  if (s.syncing) return `${label}：正在同步…`;
+  if (s.lastError) return `${label}：同步失败 · ${s.lastError}`;
+  if (!s.lastSyncAt) return `${label}：尚未同步`;
+  return `${label}：已同步 ${hhmm(s.lastSyncAt)}`;
 }
